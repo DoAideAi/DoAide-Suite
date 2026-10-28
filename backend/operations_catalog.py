@@ -11,6 +11,7 @@ def Resource(name, fields, **kw): return {'name': name, 'fields': fields, **kw}
 def Action(name, fields=None, roles=None): return {'name': name, 'fields': fields or [], 'roles': roles or ['owner','operator','reviewer']}
 REVIEW = ['owner', 'reviewer']
 LEDGER = [S('kind','Entry type',['payment','credit','refund','charge']), N('amount','Amount · INR',min=0.01), F('reference','Unique receipt / adjustment reference'), D('date','Effective date'), T('note','Source and reason')]
+LEDGER.extend([{**S('method','Payment method',['Bank transfer','Cash','UPI','Card','Gateway','Other']),'required':False},File(required=False)])
 REMINDER = [Email('recipient','Recipient email'), F('subject','Subject'), T('message','Message'), F('due_at','Send after · ISO date/time with offset'), I('start_hour','Working hours start (0–23)',max=23), I('end_hour','Working hours end (1–24)',min=1,max=24), S('consent','Recipient allows reminders',['Yes','No'])]
 SPECS = {
  'scope': {
@@ -115,3 +116,6 @@ SPECS = {
   'actions':{'verify_evidence':Action('Verify evidence readability / relevance',[Ref('item_id','Evidence','evidence'),T('note','Verification notes')],REVIEW),'pack':Action('Freeze evidence packet',[],REVIEW),'submission':Action('Record provider submission',[F('reference','Provider submission receipt'),File()],REVIEW),'outcome':Action('Record provider outcome',[S('result','Outcome',['Won','Lost','Withdrawn']),T('note','Provider decision'),File()],REVIEW)}
  }
 }
+
+from .workflow_catalog import extend
+extend(SPECS, Resource, Action, T, D, Email, Ref, File, REVIEW)

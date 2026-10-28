@@ -120,6 +120,7 @@ def row_report(db,r,user,today,renew_index):
 
 def portfolio(db,user,product=None):
     today=op.business_today(db,user);allrecords=records(db,user['workspace_id']);renew_index={}
+    if user.get('fees_access')=='academic':allrecords=[r for r in allrecords if r['product']!='fees']
     for r in allrecords:
         if r['product']!='renew' or r['status']=='archived':continue
         state=read_state(db,r['id'])
@@ -169,6 +170,7 @@ def install_reports(app,path,current_user):
         with database(path) as db:
             db.execute('BEGIN')
             for r in records(db,user['workspace_id'],product):
+                if r['product']=='fees' and user.get('fees_access')=='academic':continue
                 if r['product'] not in ('collect','fees'):continue
                 fin=op.financial(db,r)
                 rows.append([r['id'],r['product'],r['title'],'opening-charge','intake-v'+str(r['version']),'','INR',fin['total_paise'],fin['total_paise'],'intake','', 'Agreed initial obligation; not a provider receipt'])

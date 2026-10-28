@@ -53,7 +53,9 @@ def create_app(db_path=None):
         install_private_access_logging()
         yield
 
-    app = FastAPI(title="DoAide Suite", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="DoAide Suite", version="0.4.0", lifespan=lifespan)
+    from .security import RequestBoundary
+    app.add_middleware(RequestBoundary,path=db_path)
 
     @app.middleware("http")
     async def boundary(request: Request, call_next):
@@ -72,6 +74,8 @@ def create_app(db_path=None):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
+        response.headers['Content-Security-Policy']="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        response.headers['Permissions-Policy']='camera=(self), microphone=(self), geolocation=()'
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -93,7 +97,8 @@ def create_app(db_path=None):
             membership = db.execute('SELECT role FROM memberships WHERE workspace_id=? AND user_id=?', (workspace_id, user['id'])).fetchone()
             if not membership:
                 raise HTTPException(403, 'Workspace membership is required')
-        return {**dict(user), 'workspace_id': workspace_id, 'role': membership['role']}
+            access=db.execute('SELECT fees_mode FROM member_access WHERE workspace_id=? AND user_id=?',(workspace_id,user['id'])).fetchone()
+        return {**dict(user), 'workspace_id': workspace_id, 'role': membership['role'], 'fees_access':access[0] if access and membership['role']!='owner' else 'financial'}
 
     def rate_limit(request):
         ip = request.client.host if request.client else "unknown"
@@ -195,11 +200,12 @@ def create_app(db_path=None):
         if offset < 0 or not 1 <= limit <= 500:
             raise HTTPException(422, 'Invalid pagination')
         with database(db_path) as db:
+            restriction=" AND r.product!='fees'" if user.get('fees_access')=='academic' else ''
             if product:
                 require_product(product)
-                records = db.execute("SELECT r.* FROM records r JOIN record_workspaces w ON w.record_id=r.id WHERE w.workspace_id=? AND r.product=? ORDER BY r.updated_at DESC,r.id LIMIT ? OFFSET ?", (user['workspace_id'], product, limit, offset)).fetchall()
+                records = db.execute("SELECT r.* FROM records r JOIN record_workspaces w ON w.record_id=r.id WHERE w.workspace_id=? AND r.product=?"+restriction+" ORDER BY r.updated_at DESC,r.id LIMIT ? OFFSET ?", (user['workspace_id'], product, limit, offset)).fetchall()
             else:
-                records = db.execute("SELECT r.* FROM records r JOIN record_workspaces w ON w.record_id=r.id WHERE w.workspace_id=? ORDER BY r.updated_at DESC,r.id LIMIT ? OFFSET ?", (user['workspace_id'], limit, offset)).fetchall()
+                records = db.execute("SELECT r.* FROM records r JOIN record_workspaces w ON w.record_id=r.id WHERE w.workspace_id=?"+restriction+" ORDER BY r.updated_at DESC,r.id LIMIT ? OFFSET ?", (user['workspace_id'], limit, offset)).fetchall()
         return [serialize(row, False) for row in records]
 
     @app.post("/api/products/{slug}/preview")
@@ -213,6 +219,7 @@ def create_app(db_path=None):
         require_product(slug)
         if not body.title.strip():
             raise HTTPException(422, "Record title is required")
+        if slug=='fees' and user.get('fees_access')=='academic':raise HTTPException(403,'Financial access is required to create fee agreements')
         payload, result = calculate(slug, body.payload)
         record = {"id": str(uuid4()), "user_id": user["id"], "product": slug, "title": body.title.strip(), "payload": json.dumps(payload), "status": "draft", "version": 1, "created_at": now(), "updated_at": now()}
         with database(db_path) as db:
@@ -303,6 +310,12 @@ def create_app(db_path=None):
     install_inventory(app, db_path, current_user)
     from .diagnostics import install_diagnostics
     install_diagnostics(app, db_path, current_user)
+    from .access import install_access
+    install_access(app,db_path,current_user)
+    from .recordings import install_recordings
+    install_recordings(app,db_path,current_user)
+    from .whatsapp import install_whatsapp
+    install_whatsapp(app,db_path)
     install_auth_lifecycle(app, db_path, rate_limit)
 
     dist = ROOT / "frontend" / "dist"

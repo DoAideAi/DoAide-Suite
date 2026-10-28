@@ -1,34 +1,34 @@
 # DoAide Suite product index
 
-Updated: 28 October 2026 · version 0.3.0
+Updated: 28 October 2026 · version 0.4.0
 
-Repository: [DoAideAi/DoAide-Suite](https://github.com/DoAideAi/DoAide-Suite), owned by the DoAide organization and published using `r2st`.
+Repository: [DoAideAi/DoAide-Suite](https://github.com/DoAideAi/DoAide-Suite), private, published using `r2st`.
 Local checkout: `/Users/dev/projects/doaide/DoAide-Suite`.
 
-All twelve products run in this shared FastAPI, React and SQLite application. **Status: operational local workflows; full scope incomplete; not deployed to production.** Each product retains its original acceptance criteria. The remaining work includes product features as well as provider configuration and production acceptance.
+All twelve products run in this shared FastAPI/React/SQLite application. **Status: expanded local implementation; full original-scope/production acceptance open.** v0.4 closes the previously listed product-feature gaps. Live provider acceptance and additional native portfolio adapters remain explicit work.
 
-| Product | Implemented local workflows | Detailed scope |
+| Product | Implemented workflows | Detailed scope |
 | --- | --- | --- |
-| Scope | Baselines, estimates, approval limits, frozen change requests, client acceptance and invoice handoff jobs | [Scope](docs/scopes/scope.md) |
-| Collect | CSV imports, immutable collection ledger, aging, disputes/promises, consent-aware reminders and payment-link adapters | [Collect](docs/scopes/collect.md) |
-| AMC | Assets, technician scheduling, entitlements, service evidence, independent verification and renewed periods | [AMC](docs/scopes/amc.md) |
-| RFQ | Specifications, supplier quotes, units/FX, weighted comparison, approvals and frozen purchase orders | [RFQ](docs/scopes/rfq.md) |
-| Tender | Cited extraction/OCR, verified requirements, evidence expiry, amendment reset and submission readiness | [Tender](docs/scopes/tender.md) |
-| Handover | Rooms/snags, assignment, contractor links, independent verification, client acceptance and warranty reopening | [Handover](docs/scopes/handover.md) |
-| OrderDesk | Catalogue/aliases, clarification, price confirmation, stock reservation, cancellation, dispatch and count corrections | [OrderDesk](docs/scopes/orderdesk.md) |
-| Batch | Recipes/lots, material reservations, production/returns, quality holds, dispatch, traceability and recall | [Batch](docs/scopes/batch.md) |
-| Fees | Enrollment, agreements, instalments, payment/refund allocation, receipt PDFs, rescheduling and guardian statements | [Fees](docs/scopes/fees.md) |
-| Renew | Notice calendars, owner acknowledgement, backup escalation, spend/usage flags, cancellation evidence and term rollover | [Renew](docs/scopes/renew.md) |
-| SOP | Versioned publication, assignment, exact-version acknowledgement, assessments and retraining history | [SOP](docs/scopes/sop.md) |
-| ClaimPack | Manual provider templates, verified evidence, cited timelines, frozen packets, submission receipts and outcomes | [ClaimPack](docs/scopes/claimpack.md) |
+| Scope | Baselines/comparison, approval/client acceptance, Contracts source import and invoice handoff | [Scope](docs/scopes/scope.md) |
+| Collect | CSV/ledger/aging, structured cases, capped reminder sequences, payment callbacks and delivery reconciliation | [Collect](docs/scopes/collect.md) |
+| AMC | Assets/signed plans/windows, scoped technicians/evidence, independent verification and accepted renewal offers | [AMC](docs/scopes/amc.md) |
+| RFQ | Quotes/FX/taxes/duties, clarification/revision history, weighted awards and frozen comparison/PO exports | [RFQ](docs/scopes/rfq.md) |
+| Tender | Cited extraction/OCR, conditional interpretation, targeted amendments, readiness and submission receipt | [Tender](docs/scopes/tender.md) |
+| Handover | Templates/camera/repair progress/bulk assignment, limited links, photo reports and customer acceptance | [Handover](docs/scopes/handover.md) |
+| OrderDesk | WhatsApp/audio review, variants/overrides, freight/backorders, expiring reservations, dispatch and invoices | [OrderDesk](docs/scopes/orderdesk.md) |
+| Batch | Effective recipes/lots, reservations/usage, structured costs/corrections, release/disposal/recall and labels | [Batch](docs/scopes/batch.md) |
+| Fees | Agreements/concessions/late fees, evidenced receipts, withdrawal, guardian statements and academic separation | [Fees](docs/scopes/fees.md) |
+| Renew | Notice calendars/escalation, verified usage, negotiated terms, requests/confirmations and next periods | [Renew](docs/scopes/renew.md) |
+| SOP | Recording review, branching templates, publication, team/new-hire training, signoff and offline expiry | [SOP](docs/scopes/sop.md) |
+| ClaimPack | Provider templates, evidence/provenance/conflicts, approved attachment redactions and frozen packets | [ClaimPack](docs/scopes/claimpack.md) |
 
-Shared features include workspace roles, recovery/verification flows, private evidence files, immutable exports, durable jobs, portfolio reports, accounting CSV, plan limits and Stripe test-mode billing adapters. External delivery is disabled by default. Provider adapters have synthetic/mock coverage; actual provider-account acceptance remains open.
+Shared controls include roles/recovery, private evidence, frozen documents, financial/stock ledgers, durable jobs, reports, plans/billing, academic access, request limits, encrypted backups and isolated workspace-data erasure. External delivery is disabled by default.
 
-- [Implementation and verification details](docs/BUILD_STATUS.md): 129 automated tests, frontend build, dependency audit, isolated container checks and backup/restore checks.
-- [Remaining scope for every product](docs/REMAINING_SCOPE.md): product features, existing-product adapters, real provider test accounts, browser/accessibility acceptance and production operations.
-- [Master scope of work](docs/SCOPE_OF_WORK.md) and [operations runbook](docs/OPERATIONS.md).
-- [Deployment strategy](STRATEGY.md): build off-server and deploy immutable images after release acceptance.
+- [Implementation and evidence](docs/BUILD_STATUS.md): 157 suite tests and 95 Invoicer tests; frontend build/audit, container, PDF and backup/restore checks.
+- [Remaining integrations and release acceptance](docs/REMAINING_SCOPE.md): provider accounts, remaining portfolio adapters, current browser/accessibility testing, pilot validation and production operations.
+- [Connection setup](docs/INTEGRATIONS.md), [Invoicer source patch](integrations/invoicer/README.md), [scope of work](docs/SCOPE_OF_WORK.md) and [runbook](docs/OPERATIONS.md).
+- [Deployment strategy](STRATEGY.md): build off-server and release immutable images after acceptance.
 
-Current Operations UI browser acceptance remains unverified because the browser tool rejected the local URL. Historical screenshots are not current release acceptance. Local application data, credentials, backups and dependencies are excluded from Git.
+Current browser acceptance remains unverified because the browser tool rejected the local URL. Historical screenshots are not v0.4 acceptance. Credentials, application data, backups and dependencies are excluded from Git.
 
-The broader local portfolio index is `/Users/dev/projects/doaide/PRODUCT_INDEX.md`; other portfolio products have separate repositories and release status.
+The broader portfolio index is `/Users/dev/projects/doaide/PRODUCT_INDEX.md`; existing products retain separate repositories and release status.

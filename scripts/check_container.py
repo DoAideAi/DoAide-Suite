@@ -26,7 +26,9 @@ def check(image,host=None):
                 except httpx.TransportError:pass
                 time.sleep(.25)
             else:raise AssertionError('Container did not become ready')
-            version=client.get('/openapi.json').json()['info']['version']
+            specification=client.get('/openapi.json').json();version=specification['info']['version']
+            assert version=='0.4.0'
+            assert all(route in specification['paths'] for route in ('/api/fees/academic','/api/webhooks/whatsapp','/api/records/{record_id}/recordings','/api/contractor/{token}/start'))
             response=client.post('/api/auth/register',json={'email':'container-check@example.test','password':'synthetic-container-test-password'})
             assert response.status_code==201,response.text
             payload={**CATALOG['scope']['sample'],'decision':'Change required'}
@@ -42,9 +44,9 @@ def check(image,host=None):
             assert client.get('/api/billing').json()['mode']=='local'
             report=client.get('/api/reports/portfolio').json();assert report['total_records']==1 and len(report['totals'])==12
             run('exec',container,'python','-m','backend.worker','--once')
-            state=client.get('/api/diagnostics').json();assert state['schema_version']==3 and state['worker_healthy']
+            state=client.get('/api/diagnostics').json();assert state['schema_version']==4 and state['worker_healthy']
             uid=run('exec',container,'id','-u');assert uid=='10001'
-            return {'version':version,'image_id':run('image','inspect',image,'--format','{{.Id}}'),'user_id':uid,'read_only_root':True,'ephemeral_database':True,'registration':'passed','operational_approval':'passed','frozen_pdf_identity':'passed','portfolio_products':12,'billing_mode':'local','schema_version':3,'worker_readiness':'passed','external_provider_requests':0}
+            return {'version':version,'image_id':run('image','inspect',image,'--format','{{.Id}}'),'user_id':uid,'read_only_root':True,'ephemeral_database':True,'registration':'passed','operational_approval':'passed','frozen_pdf_identity':'passed','portfolio_products':12,'billing_mode':'local','schema_version':4,'worker_readiness':'passed','external_provider_requests':0}
     finally:run('rm','-f',container)
 
 

@@ -80,7 +80,7 @@ def event(db, record, user, action, data, state):
 def editable_record(db, record):
     s = get_state(db,record['id'])
     locked = {'accepted','invoicing','invoiced','reserved','materials-reserved','dispatched','produced','released','rejected','recalled','published','superseded','submitted','won','lost','withdrawn','cancelled','vendor-confirmed','completed','awarded'}
-    if s['stage'] in locked or s['data'].get('schedule_amendments') or db.execute('SELECT 1 FROM ledger WHERE record_id=?', (record['id'],)).fetchone():
+    if s['stage'] in locked or s['data'].get('withdrawal') or s['data'].get('schedule_amendments') or db.execute('SELECT 1 FROM ledger WHERE record_id=?', (record['id'],)).fetchone():
         raise HTTPException(409,'This record has operational commitments. Create a new revision/record or use an explicit adjustment.')
     if items(db,record['id'],'visit') and record['product']=='amc':
         raise HTTPException(409,'Contract terms are frozen once service visits exist; create a renewed contract for new terms')
@@ -92,6 +92,8 @@ def validate_refs(db, record, fields, data):
     for f in fields:
         val = data.get(f['key'])
         if not val: continue
+        if f['type']=='rows':
+            for row in val:validate_refs(db,record,f['columns'],row)
         if f.get('choices_from') == 'files':
             require(db.execute('SELECT 1 FROM files WHERE id=? AND record_id=? AND length(content)>0', (val,record['id'])).fetchone(), 'Evidence file must belong to this record')
         elif f.get('choices_from'):
@@ -110,6 +112,8 @@ def resource(db, record, user, kind, raw, item_id=None, delete=False):
     if slug=='renew' and kind=='reminder_policy':permit(user,'owner','reviewer')
     if record['status']=='archived': raise HTTPException(409,'Restore the record before editing')
     existing = one_item(db,record['id'],item_id,kind) if item_id else None
+    if existing and existing['data'].get('_outcome'):raise HTTPException(409,'Resolved cases are immutable; open a new case')
+    if state['data'].get('withdrawal'):raise HTTPException(409,'Enrollment was withdrawn; use an explicit financial correction')
     if slug=='batch' and kind=='dispatch' and existing:
         raise HTTPException(409,'Dispatch events are immutable; use a stock adjustment with its reference')
     if slug=='fees' and kind=='instalment' and (ledger_rows(db,record['id']) or state['data'].get('schedule_amendments')):
@@ -141,6 +145,8 @@ def resource(db, record, user, kind, raw, item_id=None, delete=False):
             from .renewals import policy_days
             policy_days(data)
         validate_refs(db,record,spec['fields'],data)
+        from .workflow_extensions import validate_resource
+        validate_resource(db,record,user,kind,data,item_id)
         if spec.get('singleton'):
             prior = items(db,record['id'],kind)
             require(not prior or (item_id and prior[0]['id']==item_id),'Edit the existing settings instead of adding another')
@@ -206,7 +212,7 @@ def schedule_visit(db, record, user, data, item_id):
     tz=db.execute('SELECT timezone FROM workspaces WHERE id=?',(user['workspace_id'],)).fetchone()[0]
     day=datetime.fromisoformat(data['start']).astimezone(ZoneInfo(tz)).date().isoformat()
     require(p['start']<=day<=p['end'],'Visit must be inside the contract period')
-    require(db.execute('SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? AND u.email=? AND m.role IN (\'owner\',\'operator\',\'reviewer\')',(user['workspace_id'],data['technician'])).fetchone(),'Assign a technician who is a workspace member')
+    if data.get('access')!='Assigned link':require(db.execute('SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? AND u.email=? AND m.role IN (\'owner\',\'operator\',\'reviewer\')',(user['workspace_id'],data['technician'])).fetchone(),'Assign a workspace technician or explicitly select assigned-link access')
     rows=db.execute("SELECT i.id,i.data FROM operation_items i JOIN record_workspaces w ON w.record_id=i.record_id WHERE w.workspace_id=? AND i.kind='visit'",(user['workspace_id'],)).fetchall()
     for row in rows:
         if row['id']==item_id: continue
@@ -218,7 +224,7 @@ def schedule_visit(db, record, user, data, item_id):
 
 
 def ledger_rows(db,record_id):
-    return [dict(r) for r in db.execute('SELECT * FROM ledger WHERE record_id=? ORDER BY created_at,id',(record_id,))]
+    return [dict(r) for r in db.execute('SELECT l.*,e.method,e.file_id FROM ledger l LEFT JOIN ledger_evidence e ON e.entry_id=l.id WHERE l.record_id=? ORDER BY l.created_at,l.id',(record_id,))]
 
 
 def financial(db,record):
@@ -265,6 +271,8 @@ def post_ledger(db,record,user,data):
     require(not prior,'This payment / adjustment reference has already been recorded')
     identifier=uid()
     db.execute('INSERT INTO ledger VALUES (?,?,?,?,?,?,?,?,?,?,?)',(identifier,user['workspace_id'],record['id'],data['kind'],value,data['reference'],'INR',data['date'],data['note'],user['email'],now()))
+    if data.get('method') or data.get('file_id'):
+        db.execute('INSERT INTO ledger_evidence VALUES (?,?,?)',(identifier,data.get('method') or 'Other',data.get('file_id') or None))
     return identifier
 
 
@@ -277,6 +285,13 @@ def snapshot(db,record,user,kind,state,extra=None):
     if record['product']=='sop':
         body['items']=[{**i,'data':{k:v for k,v in i['data'].items() if k!='answer'}} for i in body['items'] if i['kind']!='assignment']
     if record['product']=='claimpack':
+        redactions=[]
+        for i in body['items']:
+            approved=i['data'].get('_approved_redaction') if i['kind']=='evidence' else None
+            if approved:
+                i['data']['file_id']=approved['redacted_file_id']
+                redactions.append(approved)
+        if redactions:body['extra']['approved_attachment_redactions']=redactions
         selected={i['data']['file_id'] for i in body['items'] if i['kind']=='evidence'}
         body['files']=[f for f in body['files'] if f['id'] in selected]
     identifier=uid(); timestamp=now()
@@ -304,16 +319,20 @@ def reminder_blocker(db,record):
     if record['status']=='archived': return 'Record is archived'
     if slug in ('collect','fees') and financial(db,record)['balance_paise']<=0: return 'Balance is settled'
     if slug=='fees' and financial(db,record)['due_now_paise']<=0:return 'No instalments are currently due'
+    if slug=='fees':
+        row=db.execute('SELECT data FROM operations WHERE record_id=?',(record['id'],)).fetchone()
+        if row and json.loads(row[0]).get('withdrawal'):return 'Enrollment was withdrawn'
     if slug=='collect':
         disputed=p['disputed']=='Yes';promise=p['promise'];optout=False
+        cases=[]
         for i in items(db,record['id'],'promise'):
             data=i['data'];kind=data['kind']
-            if kind=='Dispute': disputed=True
-            if kind=='Resolution': disputed=False
-            if kind=='Promise': promise=data['until']
+            if kind=='Dispute' and not data.get('_outcome'): cases.append(i['id'])
+            if kind=='Resolution': disputed=False;cases=[]
+            if kind=='Promise' and not data.get('_outcome'): promise=max(promise or '',data['until'] or '')
             if kind=='Opt out': optout=True
             if kind=='Opt in': optout=False
-        if disputed: return 'Open dispute'
+        if disputed or cases: return 'Open dispute'
         if optout: return 'Customer opted out'
         workspace=db.execute('SELECT workspace_id FROM record_workspaces WHERE record_id=?',(record['id'],)).fetchone()[0]
         if promise and promise>=business_today(db,{'workspace_id':workspace}).isoformat(): return 'Active payment promise'
@@ -333,6 +352,9 @@ def schedule_reminder(db,record,user,data):
     require(not reason,reason or '')
     data['due_at']=instant(data['due_at'])
     require(data['due_at']>=now(),'Reminder time must be in the future')
+    from .workflow_extensions import contact_blocker
+    reason=contact_blocker(db,record,data,when=data['due_at'])
+    require(not reason,reason or '')
     return enqueue(db,record,user,'email',data,'reminder:'+digest(data),data['due_at'])
 
 
@@ -370,7 +392,10 @@ def execute(db,record,user,action,raw):
         raise HTTPException(409,'This accepted version is immutable; create a new revision')
     if s['stage'] in ('won','lost','withdrawn') or (s['stage']=='submitted' and not (slug=='claimpack' and action=='outcome')):
         raise HTTPException(409,'Submitted evidence is immutable; create a new revision')
-    if action=='ledger':
+    from .workflow_extensions import execute as extended_execute, before_action, after_action
+    before_action(db,record,user,action,data,s)
+    if extended_execute(db,record,user,action,data,s,result):pass
+    elif action=='ledger':
         result['entry_id']=post_ledger(db,record,user,data)
         result['document_id']=snapshot(db,record,user,'receipt',s,{'entry_id':result['entry_id']})
     elif action=='reminder': result['job_id']=schedule_reminder(db,record,user,data)
@@ -406,10 +431,11 @@ def execute(db,record,user,action,raw):
                 require(user['email']==v['technician'],'Only the assigned technician can record service completion')
                 require(v.get('_status','scheduled')=='scheduled','This visit was already completed')
                 require(v['start']<=now(),'Cannot complete a future service visit')
+                if items(db,record['id'],'plan'):require(v.get('_readings'),'Record every signed-plan checklist reading before completion')
                 v.update(_status='completed',_completed_by=user['id'],_notes=data['notes'],_file=data['file_id'],_completed_at=now())
             else:
                 require(v.get('_status')=='completed','Technician completion is required before verification')
-                require(v['_completed_by']!=user['id'],'A different person must independently verify service')
+                require(v['_completed_by'] not in (user['id'],'external:'+user['email']),'A different person must independently verify service')
                 v.update(_status='verified',_verified_by=user['id'],_verified_at=now())
             store_item(db,record['id'],'visit',v,user,item['id'])
         elif action=='service_statement':result['document_id']=snapshot(db,record,user,'service-statement',s)
@@ -471,6 +497,7 @@ def execute(db,record,user,action,raw):
     elif slug=='renew': renew_action(db,record,user,action,data,s,result)
     elif slug=='sop': sop_action(db,record,user,action,data,s,result)
     elif slug=='claimpack': claim_action(db,record,user,action,data,s,result)
+    after_action(db,record,user,action,data,s)
     event(db,record,user,action,{'input':data,'result':result},s)
     return result
 
@@ -488,9 +515,15 @@ def compare_quotes(db,record):
         require(re.fullmatch('[A-Z]{3}',d['currency']),'Use an uppercase three-letter currency code')
         if d['currency']=='INR': require(decimal(d['fx'])==1,'INR quotes require an exchange rate of 1')
         base=decimal(d['quantity'])*decimal(d['price'])-decimal(d['discount']);require(base>=0,'Quote discount exceeds goods value')
-        total=cents(amount((base*(1+decimal(d['tax'])/100)+decimal(d['freight']))*decimal(d['fx'])))
+        total=cents(amount((base*(1+decimal(d['tax'])/100)+decimal(d['freight'])*(1+decimal(d.get('freight_tax') or 0)/100)+decimal(d.get('duties') or 0)+decimal(d.get('packaging') or 0)*(1+decimal(d.get('packaging_tax') or 0)/100))*decimal(d['fx'])))
+        workspace=db.execute('SELECT workspace_id FROM record_workspaces WHERE record_id=?',(record['id'],)).fetchone()[0]
+        today=business_today(db,{'workspace_id':workspace})
+        if d.get('valid_until') and d['valid_until']<today.isoformat():q['blockers'].append('Quotation expired: '+r['sku'])
+        request=items(db,record['id'],'request')
+        if request and today+timedelta(days=int(d['lead_days']))>date.fromisoformat(request[0]['data']['required_on']):q['blockers'].append('Delivery is later than requested: '+r['sku'])
         q['total_paise']+=total;q['lines'].append({**d,'total_paise':total})
     for q in groups.values():
+        if any(i['data']['supplier']==q['supplier'] and not i['data'].get('answer') for i in items(db,record['id'],'clarification')):q['blockers'].append('Unanswered supplier clarification')
         missing={r['id'] for r in requirements}-{line['requirement_id'] for line in q['lines']}
         if missing:q['blockers'].append(f'Missing {len(missing)} required item(s)')
     policy=items(db,record['id'],'policy')
@@ -512,9 +545,10 @@ def tender_action(db,record,user,action,data,s,result):
             text=file['extracted'];require(text.strip(),'No extractable text; upload a readable or OCR-processed document')
             count=0
             for line in text.splitlines():
-                if re.search(r'\b(required|must|shall|mandatory)\b',line,re.I):
+                if re.search(r'\b(required|must|shall|mandatory|certificate|eligible|deadline|submit|if applicable|for information)\b',line,re.I):
                     if any(i['data']['citation']==file['name']+' · '+line[:120] for i in items(db,record['id'],'requirement')):continue
-                    store_item(db,record['id'],'requirement',{'text':line[:20000],'citation':file['name']+' · '+line[:120],'category':'Submission','owner':user['email'],'due':json.loads(record['payload'])['deadline'],'file_id':'','valid_until':'','_source_file':file['id']},user);count+=1
+                    interpretation='Conditional' if re.search(r'\b(if|where applicable|unless)\b',line,re.I) else 'Informational' if re.search(r'\b(for information|may)\b',line,re.I) else 'Mandatory'
+                    store_item(db,record['id'],'requirement',{'text':line[:20000],'citation':file['name']+' · '+line[:120],'category':'Submission','owner':user['email'],'due':json.loads(record['payload'])['deadline'],'file_id':'','valid_until':'','interpretation':interpretation,'condition':line if interpretation=='Conditional' else '','applies':'Unreviewed','_source_file':file['id'],'_interpretation_needs_review':True},user);count+=1
             require(count,'No new explicit requirements found; add and cite requirements manually')
             result['candidates']=count
         else:
@@ -524,7 +558,9 @@ def tender_action(db,record,user,action,data,s,result):
         invalidate(db,record['id']);s['stage']='draft';s['data'].pop('ready',None)
     elif action=='verify_requirement':
         item=one_item(db,record['id'],data['item_id'],'requirement');r=item['data']
-        require(r['file_id'],'Attach the required evidence file before verification')
+        if r.get('interpretation')=='Conditional':require(r.get('applies') in ('Yes','No'),'Review whether the condition applies')
+        required=r.get('interpretation')!='Informational' and not (r.get('interpretation')=='Conditional' and r.get('applies')=='No')
+        if required:require(r['file_id'],'Attach the required evidence file before verification')
         deadlines=items(db,record['id'],'deadline')
         deadline=(datetime.fromisoformat(deadlines[0]['data']['at']).astimezone(ZoneInfo(deadlines[0]['data']['timezone'])).date().isoformat() if deadlines else json.loads(record['payload'])['deadline'])
         require(not r['valid_until'] or r['valid_until']>=deadline,'Evidence expires before the tender deadline')
@@ -547,11 +583,11 @@ def handover_action(db,record,user,action,data,s,result):
         return
     i=one_item(db,record['id'],data['item_id'],'issue');d=i['data'];status=d.get('_status','open')
     if action=='fixed':
-        require(status in ('open','reopened'),'This issue is already fixed or verified')
+        require(status in ('open','reopened','acknowledged','in-repair'),'This issue is already fixed or verified')
         require(user['role']=='owner' or user['email']==d['assignee'],'Only the assigned operator can report the repair')
         d.update(_status='fixed',_fixed_by=user['id'],_repair_note=data['note'],_repair_file=data['file_id'])
     elif action=='verify_issue':
-        require(status=='fixed','Record the repair first');require(d['_fixed_by']!=user['id'],'A different person must independently verify this repair')
+        require(status=='fixed','Record the repair first');require(d['_fixed_by'] not in (user['id'],'external:'+user['email']),'A different person must independently verify this repair')
         d.update(_status='verified',_verified_by=user['email'],_verification=data['note'])
     elif action=='waive':
         require(d['severity']=='Minor','Major and critical issues cannot be waived')
@@ -631,7 +667,7 @@ def order_action(db,record,user,action,data,s,result):
             row=stock_row(db,user,line['sku']);require(row and decimal(row['quantity'])-decimal(row['held'])>=line['quantity'],'Stock changed; revise and reconfirm the order')
             require(digest(json.loads(row['data']))==line['price_version'],'Catalogue changed; reprice and reconfirm the order')
             db.execute('UPDATE stock SET held=?,updated_at=? WHERE workspace_id=? AND sku=?',(str(decimal(row['held'])+line['quantity']),now(),user['workspace_id'],line['sku']))
-            movement(db,record,user,line['sku'],line['quantity'],'reserve','reserve:'+record['id'])
+            movement(db,record,user,line['sku'],line['quantity'],'reserve','reserve:'+record['id']+':'+str(s['revision']))
         s['stage']='reserved'
     elif action=='dispatch':
         require(s['stage']=='reserved','Reserve stock before dispatch')
@@ -693,7 +729,12 @@ def batch_action(db,record,user,action,data,s,result):
         require(usage and recipe,'Add a recipe version and actual lot usage')
         versions={i['data']['version'] for i in recipe};require(len(versions)==1,'One batch must use a single recipe version')
         require(p['expiry']>=business_today(db,user).isoformat(),'Finished-batch expiry is in the past')
-        total=cents(p['overhead']);consumed=[];actual={}
+        costs=items(db,record['id'],'cost')
+        total=sum(cents(i['data']['amount']) for i in costs) if costs else cents(p['overhead']);consumed=[];actual={}
+        for i in recipe:
+            r=i['data'];today=business_today(db,user).isoformat()
+            require(not r.get('effective_from') or r['effective_from']<=today,'Recipe is not yet effective')
+            require(not r.get('effective_until') or r['effective_until']>=today,'Recipe has expired')
         for i in usage:
             d=i['data'];sku='lot:'+d['lot'];row=stock_row(db,user,sku);require(row,'Receive ingredient lot '+d['lot']+' first')
             lot=json.loads(row['data']);q=decimal(d['quantity'])
@@ -728,6 +769,9 @@ def batch_action(db,record,user,action,data,s,result):
         movement(db,record,user,sku,q,'return','return:'+data['reference'])
         db.execute('UPDATE stock SET quantity=?,updated_at=? WHERE workspace_id=? AND sku=?',(str(decimal(row['quantity'])+q),now(),user['workspace_id'],sku))
         adjustment={**data,'by':user['email'],'at':now(),'cost_reduction_paise':cents(amount(q*decimal(json.loads(row['data'])['cost'])))}
+        adjusted=s['data']['production']['total_paise']-sum(i['cost_reduction_paise'] for i in s['data'].get('returns',[]))+sum(i['delta_paise'] for i in s['data'].get('cost_adjustments',[]))-adjustment['cost_reduction_paise']
+        require(adjusted>=0,'Return would make the adjusted batch cost negative; reconcile cost corrections first')
+        s['data']['adjusted_cost_paise']=adjusted
         s['data'].setdefault('returns',[]).append(adjustment)
         result['document_id']=snapshot(db,record,user,'material-return-adjustment',s,adjustment)
     elif action=='quality_release':
@@ -842,7 +886,7 @@ def claim_action(db,record,user,action,data,s,result):
         required={v.strip().casefold() for v in t['required_kinds'].splitlines() if v.strip()};available={i['data']['kind'].casefold() for i in evidence}
         require(required and required<=available,'Missing required evidence categories: '+', '.join(sorted(required-available)))
         require(items(db,record['id'],'timeline'),'Add a factual, evidence-linked timeline')
-        file_ids={i['data']['file_id'] for i in evidence};size=sum(db.execute('SELECT size FROM files WHERE id=?',(f,)).fetchone()[0] for f in file_ids)
+        file_ids={i['data'].get('_approved_redaction',{}).get('redacted_file_id',i['data']['file_id']) for i in evidence};size=sum(db.execute('SELECT size FROM files WHERE id=?',(f,)).fetchone()[0] for f in file_ids)
         require(size<int(t['max_mb'])*1024*1024,'Evidence files exceed the provider size limit')
         s['stage']='packed';s['data']['packet_document']=snapshot(db,record,user,'claim-packet',s);result['document_id']=s['data']['packet_document']
     elif action=='submission':

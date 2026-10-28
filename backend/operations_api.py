@@ -78,7 +78,7 @@ def install_operations(app,db_path,current_user):
     @app.get('/api/workspace/members')
     def members(user=Depends(current_user)):
         with transaction() as db:
-            return [dict(r) for r in db.execute('SELECT u.id,u.email,m.role FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? ORDER BY u.email',(user['workspace_id'],))]
+            return [dict(r) for r in db.execute("SELECT u.id,u.email,m.role,coalesce(a.fees_mode,'financial') AS fees_mode FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN member_access a ON a.workspace_id=m.workspace_id AND a.user_id=m.user_id WHERE m.workspace_id=? ORDER BY u.email",(user['workspace_id'],))]
 
     @app.put('/api/workspace')
     def settings(body:WorkspaceSettings,user=Depends(current_user)):
@@ -251,6 +251,29 @@ def install_operations(app,db_path,current_user):
             d=document_access(db,document_id,user);content=packet_zip(db,d)
         return Response(content,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="{d["number"]}-packet.zip"'})
 
+    @app.get('/api/documents/{document_id}/comparison.csv')
+    def comparison_csv(document_id:str,user=Depends(current_user)):
+        with transaction() as db:d=document_access(db,document_id,user)
+        op.require(d['kind']=='supplier-comparison','Choose a frozen supplier comparison')
+        snap=json.loads(d['snapshot']);output=io.StringIO();writer=csv.writer(output)
+        writer.writerow(['Supplier','Item reference','Quantity','Unit','Currency','FX to INR','Goods unit price','Discount','Goods tax %','Freight','Freight tax %','Duties','Packaging','Packaging tax %','Landed INR','Lead days','Valid until','Payment terms','Source line','Blockers'])
+        def safe(value):
+            text=str(value)
+            return "'"+text if text.lstrip().startswith(('=','+','-','@','\t','\r')) else text
+        for supplier in snap['workflow']['comparison']:
+            for line in supplier['lines']:
+                values=[supplier['supplier']]+[line.get(k,'') for k in ('requirement_id','quantity','unit','currency','fx','price','discount','tax','freight','freight_tax','duties','packaging','packaging_tax')]+[format(line['total_paise']/100,'.2f')]+[line.get(k,'') for k in ('lead_days','valid_until','payment_terms','source_line')]+['; '.join(supplier['blockers'])]
+                writer.writerow([safe(v) for v in values])
+        return Response('\ufeff'+output.getvalue(),media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{d["number"]}.csv"'})
+
+    @app.get('/api/documents/{document_id}/validity')
+    def document_validity(document_id:str,user=Depends(current_user)):
+        with transaction() as db:
+            d=document_access(db,document_id,user);snap=json.loads(d['snapshot']);s=op.get_state(db,d['record_id'])
+            if d['kind']!='controlled-procedure-copy':return {'current':True,'expires_at':None}
+            extra=snap['extra']
+            return {'current':extra['expires_at']>op.now() and s['stage']=='published' and s['data'].get('published_document')==extra['source_document'],'expires_at':extra['expires_at'],'source_document':extra['source_document']}
+
     @app.post('/api/records/{record_id}/shares',status_code=201)
     def share(record_id:str,body:Share,user=Depends(current_user)):
         permit(user,'owner','reviewer')
@@ -260,9 +283,11 @@ def install_operations(app,db_path,current_user):
             op.require(d['record_id']==record_id,'Choose a document from this record')
             s=op.get_state(db,record_id)
             if body.purpose=='accept':
-                op.require(r['product'] in ('scope','handover'),'Acceptance is available for changes and handovers')
-                op.require(s['data'].get('approved_document')==d['id'] and d['record_version']==r['version'],'Only the current approved document can be accepted')
-                op.require(not s['data'].get('accepted_document'),'This document has already been accepted')
+                op.require(r['product'] in ('scope','handover','amc'),'Acceptance is available for changes, handovers and renewal offers')
+                approved='renewal_offer_document' if r['product']=='amc' else 'approved_document'
+                accepted='renewal_accepted' if r['product']=='amc' else 'accepted_document'
+                op.require(s['data'].get(approved)==d['id'] and d['record_version']==r['version'],'Only the current approved document can be accepted')
+                op.require(not s['data'].get(accepted),'This document has already been accepted')
             email=body.recipient.strip().lower();op.require('@' in email and ' ' not in email,'Enter the recipient email')
             if r['product']=='fees':op.require(any(i['data']['email']==email for i in op.items(db,r['id'],'guardian')),'Share student records only with a linked guardian')
             if r['product']=='scope' and body.purpose=='accept':
@@ -270,6 +295,11 @@ def install_operations(app,db_path,current_user):
                 if projects:op.require(email==projects[0]['data']['contact'],'Send acceptance to the project approval contact')
             token=secrets.token_urlsafe(32);identifier=op.uid()
             expiry=int(time.time())+body.hours*3600
+            if r['product']=='amc' and body.purpose=='accept':
+                offer=s['data']['renewal_offer'];op.require(email==offer['contact'],'Send the offer to its customer approval contact')
+                zone=db.execute('SELECT timezone FROM workspaces WHERE id=?',(user['workspace_id'],)).fetchone()[0]
+                expiry=min(expiry,int(datetime.fromisoformat(offer['valid_until']+'T23:59:59').replace(tzinfo=ZoneInfo(zone)).timestamp()))
+                op.require(expiry>int(time.time()),'Renewal offer expired')
             if r['product']=='scope' and body.purpose=='accept' and projects:
                 zone=db.execute('SELECT timezone FROM workspaces WHERE id=?',(user['workspace_id'],)).fetchone()[0]
                 validity=datetime.fromisoformat(projects[0]['data']['valid_until']+'T23:59:59').replace(tzinfo=ZoneInfo(zone))
@@ -297,6 +327,8 @@ def install_operations(app,db_path,current_user):
 
     def public_snapshot(d):
         snap=json.loads(d['snapshot'])
+        if d['kind']=='amc-renewal-offer':
+            return {'record':snap['record'],'payload':{'customer':snap['payload']['customer']},'extra':snap['extra'],'items':[],'stage':'renewal-offered'}
         # External links expose only the selected record and document. No workspace,
         # raw file download, internal event feed, assignment or answer key is exposed.
         snap['items']=[{'kind':i['kind'],'data':i['data']} for i in snap['items'] if i['kind'] not in ('policy','guardian','assignment','question')]
@@ -320,13 +352,15 @@ def install_operations(app,db_path,current_user):
             op.require(body.email.strip().lower()==share['recipient'],'Use the recipient email associated with this link')
             if share['accepted_at']:return {'accepted_at':share['accepted_at'],'checksum':d['checksum']}
             r=dict(db.execute('SELECT * FROM records WHERE id=?',(d['record_id'],)).fetchone());s=op.get_state(db,r['id'])
-            op.require(s['data'].get('approved_document')==d['id'] and r['version']==d['record_version'],'The document changed; request a new link')
-            op.require(not s['data'].get('accepted_document'),'The document has already been accepted through another link')
+            approved='renewal_offer_document' if r['product']=='amc' else 'approved_document'
+            accepted='renewal_accepted' if r['product']=='amc' else 'accepted_document'
+            op.require(s['data'].get(approved)==d['id'] and r['version']==d['record_version'],'The document changed; request a new link')
+            op.require(not s['data'].get(accepted),'The document has already been accepted through another link')
             timestamp=op.now();db.execute('UPDATE shares SET accepted_at=?,accepted_name=?,accepted_email=? WHERE id=?',(timestamp,body.name.strip(),body.email.lower(),share['id']))
             db.execute('INSERT INTO share_decisions VALUES (?,?,?)',(share['id'],body.decision,body.comments))
-            s['stage']='accepted' if body.decision=='accept' else 'declined'
-            if body.decision=='accept':s['data']['accepted_document']=d['id']
-            else:s['data'].pop('approved_document',None)
+            if r['product']!='amc':s['stage']='accepted' if body.decision=='accept' else 'declined'
+            if body.decision=='accept':s['data'][accepted]=d['id']
+            else:s['data'].pop(approved,None)
             s['data']['acceptance']={'name':body.name.strip(),'email':body.email.lower(),'checksum':d['checksum'],'decision':body.decision,'comments':body.comments,'at':timestamp}
             op.event(db,r,{'email':body.email.lower()},'client.'+s['stage'],s['data']['acceptance'],s)
         return {'accepted_at':timestamp,'checksum':d['checksum']}
@@ -353,7 +387,9 @@ def install_operations(app,db_path,current_user):
 
     @app.get('/api/jobs')
     def jobs(user=Depends(current_user)):
-        with transaction() as db:return [dict(r) for r in db.execute('SELECT id,record_id,kind,state,due_at,attempts,last_error,updated_at FROM jobs WHERE workspace_id=? ORDER BY created_at DESC LIMIT 500',(user['workspace_id'],))]
+        with transaction() as db:
+            restriction=" AND (record_id IS NULL OR record_id NOT IN (SELECT id FROM records WHERE product='fees'))" if user.get('fees_access')=='academic' else ''
+            return [dict(r) for r in db.execute('SELECT id,record_id,kind,state,due_at,attempts,last_error,updated_at FROM jobs WHERE workspace_id=?'+restriction+' ORDER BY created_at DESC LIMIT 500',(user['workspace_id'],))]
 
     @app.post('/api/jobs/{job_id}/retry')
     def retry_job(job_id:str,user=Depends(current_user)):

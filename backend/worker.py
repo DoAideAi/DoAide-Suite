@@ -26,6 +26,8 @@ def claim(path=None):
         db.execute("INSERT INTO runtime_status VALUES ('worker',?) ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen",(timestamp,))
         from .billing import periodic
         periodic(db)
+        from .workflow_extensions import periodic as product_periodic
+        product_periodic(db)
         db.execute("UPDATE jobs SET state='blocked',last_error='Worker stopped during email delivery; reconcile SMTP logs before retry',lease_until=NULL WHERE state='running' AND lease_until<? AND kind IN ('email','auth-email')",(timestamp,))
         row=db.execute("""SELECT j.* FROM jobs j WHERE
             ((j.state IN ('queued','failed') AND j.due_at<=?) OR (j.state='running' AND j.lease_until<?))
@@ -41,6 +43,15 @@ def claim(path=None):
 
 def deliver(job,path=None,transport=None):
     data=job['data'];kind=job['kind']
+    if kind=='contracts-import':
+        from .portfolio_connections import import_contract
+        return import_contract(job,path,transport)
+    if kind=='transcribe':
+        from .recordings import deliver as transcribe
+        return transcribe(job,path,transport)
+    if kind=='whatsapp-media':
+        from .whatsapp import deliver as media
+        return media(job,path,transport)
     if kind.startswith('billing-'):
         from .billing import deliver as deliver_billing
         return deliver_billing(job,path,transport)
@@ -66,9 +77,17 @@ def deliver(job,path=None,transport=None):
         if kind=='email' and record['product']=='fees':
             guardians=[json.loads(r[0]) for r in db.execute("SELECT data FROM operation_items WHERE record_id=? AND kind='guardian'",(record['id'],))]
             if not any(g['email']==data['recipient'] and g['reminders']=='Yes' for g in guardians):raise Blocked('Guardian consent no longer permits this reminder')
+        if kind=='email' and record['product']=='collect':
+            from .workflow_extensions import contact_blocker
+            blocker=contact_blocker(db,record,data,exclude=job['id'])
+            if blocker:raise Blocked(blocker)
         if kind=='email' and record['product']=='renew':
             from .renewals import delivery_blocker
             blocker=delivery_blocker(db,record,data)
+            if blocker:raise Blocked(blocker)
+        if kind=='email' and record['product']=='sop':
+            from .workflow_extensions import training_blocker
+            blocker=training_blocker(db,record,data)
             if blocker:raise Blocked(blocker)
         if kind=='payment-link' and financial(db,record)['balance_paise']!=data['amount']:raise Blocked('Balance changed; request a fresh payment link')
     if os.environ.get('DOAIDE_DELIVERY_MODE','disabled')!='enabled':raise Blocked('External delivery is disabled. Configure the provider, then enable delivery and retry.')
@@ -91,9 +110,8 @@ def deliver(job,path=None,transport=None):
             response=client.post('https://api.razorpay.com/v1/payment_links',auth=(key,secret),json={'amount':data['amount'],'currency':data['currency'],'accept_partial':True,'reference_id':job['id'],'description':'DoAide invoice payment','customer':{'email':data['email']},'notify':{'sms':False,'email':False},'reminder_enable':False,'notes':{'doaide_job_id':job['id'],'doaide_record_id':job['record_id']}})
             response.raise_for_status();return {'provider':response.json()}
     if kind=='invoice':
-        url=os.environ.get('DOAIDE_INVOICE_ADAPTER_URL');token=os.environ.get('DOAIDE_INVOICE_ADAPTER_TOKEN')
-        if not url or not token:raise Blocked('Invoice adapter URL and server token are not configured')
-        if not url.startswith('https://'):raise Blocked('Invoice adapter must use HTTPS')
+        from .portfolio_connections import connection
+        config=connection('INVOICE',job['workspace_id'],path);url,token=config['url'],config['token']
         with database(path) as db:doc=dict(db.execute('SELECT * FROM documents WHERE id=?',(data['document_id'],)).fetchone())
         with httpx.Client(timeout=30,transport=transport) as client:
             response=client.post(url,headers={'Authorization':'Bearer '+token,'Idempotency-Key':job['id']},json={'source':'doaide-'+record['product'],'document':{**doc,'snapshot':json.loads(doc['snapshot'])}})

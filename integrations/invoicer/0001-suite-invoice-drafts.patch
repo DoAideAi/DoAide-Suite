@@ -1,0 +1,322 @@
+From 436a1ccd65d3e645491332fe7dd745088516c6f3 Mon Sep 17 00:00:00 2001
+From: r2st <sumaninster11@gmail.com>
+Date: Wed, 28 Oct 2026 21:08:05 +0530
+Subject: [PATCH] Add authenticated idempotent DoAide Suite invoice drafts
+
+---
+ app/main.py                              |  3 +-
+ app/models/__init__.py                   |  1 +
+ app/models/suite_handoff.py              | 17 ++++++
+ app/routers/suite_handoff.py             | 78 ++++++++++++++++++++++++
+ frontend/src/lib/format.js               |  1 +
+ frontend/src/pages/InvoiceDetailPage.jsx |  5 +-
+ scripts/migrate_suite_handoffs.py        | 38 ++++++++++++
+ tests/test_suite_handoff.py              | 77 +++++++++++++++++++++++
+ 8 files changed, 218 insertions(+), 2 deletions(-)
+ create mode 100644 app/models/suite_handoff.py
+ create mode 100644 app/routers/suite_handoff.py
+ create mode 100644 scripts/migrate_suite_handoffs.py
+ create mode 100644 tests/test_suite_handoff.py
+
+diff --git a/app/main.py b/app/main.py
+index 245a03d..be290cc 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -9,7 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
+ import app.models  # noqa: F401
+ from app.core.config import settings
+ from app.core.database import check_database, engine
+-from app.routers import auth, businesses, export, feedback, health, hsn, invoices, oauth, subscriptions, whatsapp
++from app.routers import auth, businesses, export, feedback, health, hsn, invoices, oauth, subscriptions, suite_handoff, whatsapp
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
+     application.include_router(auth.router, prefix=prefix)
+     application.include_router(oauth.router, prefix=prefix)
+     application.include_router(export.router, prefix=prefix)
++    application.include_router(suite_handoff.router, prefix=prefix)
+     application.include_router(invoices.router, prefix=prefix)
+     application.include_router(businesses.router, prefix=prefix)
+     application.include_router(whatsapp.router, prefix=prefix)
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 4b40a05..1be1258 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -7,3 +7,4 @@ import app.models.processing_job  # noqa: F401
+ import app.models.usage_tracking  # noqa: F401
+ import app.models.whatsapp_session  # noqa: F401
+ import app.models.subscription  # noqa: F401
++import app.models.suite_handoff  # noqa: F401
+diff --git a/app/models/suite_handoff.py b/app/models/suite_handoff.py
+new file mode 100644
+index 0000000..bf734ef
+--- /dev/null
++++ b/app/models/suite_handoff.py
+@@ -0,0 +1,17 @@
++from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
++from sqlalchemy.orm import Mapped, mapped_column
++from app.core.database import Base
++from app.models.mixins import TimestampMixin
++
++
++class SuiteHandoff(Base, TimestampMixin):
++    __tablename__ = 'suite_handoffs'
++    __table_args__ = (UniqueConstraint('user_id','idempotency_key'), UniqueConstraint('user_id','document_id'))
++    id: Mapped[int] = mapped_column(primary_key=True)
++    user_id: Mapped[int] = mapped_column(ForeignKey('users.id',ondelete='CASCADE'),nullable=False)
++    invoice_id: Mapped[int | None] = mapped_column(ForeignKey('invoices.id',ondelete='SET NULL'),nullable=True)
++    idempotency_key: Mapped[str] = mapped_column(String(128),nullable=False)
++    document_id: Mapped[str] = mapped_column(String(100),nullable=False)
++    request_hash: Mapped[str] = mapped_column(String(64),nullable=False)
++    source: Mapped[str] = mapped_column(String(30),nullable=False)
++    snapshot: Mapped[str] = mapped_column(Text,nullable=False)
+diff --git a/app/routers/suite_handoff.py b/app/routers/suite_handoff.py
+new file mode 100644
+index 0000000..853e4bf
+--- /dev/null
++++ b/app/routers/suite_handoff.py
+@@ -0,0 +1,78 @@
++"""Authenticated, idempotent drafts from immutable DoAide Suite documents."""
++import hashlib
++import json
++from decimal import Decimal
++from typing import Literal
++from fastapi import APIRouter, Depends, Header, HTTPException
++from pydantic import BaseModel, ConfigDict
++from sqlalchemy import or_, select
++from sqlalchemy.exc import IntegrityError
++from sqlalchemy.orm import Session
++from app.core.database import get_db
++from app.core.deps import get_current_user
++from app.models.invoice import Invoice
++from app.models.invoice_item import InvoiceItem
++from app.models.suite_handoff import SuiteHandoff
++from app.models.user import User
++from app.services.usage_service import check_quota, increment_usage
++
++router=APIRouter(prefix='/invoices',tags=['suite integrations'])
++
++
++class Draft(BaseModel):
++    model_config=ConfigDict(extra='forbid')
++    source:Literal['doaide-scope','doaide-amc','doaide-orderdesk']
++    document:dict
++
++
++def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False)
++
++
++@router.post('/drafts',status_code=201)
++def create_draft(body:Draft,idempotency_key:str=Header(min_length=8,max_length=128),current_user:User=Depends(get_current_user),db:Session=Depends(get_db)):
++    doc=body.document;snap=doc.get('snapshot')
++    if not isinstance(snap,dict) or doc.get('kind')!='draft-invoice':raise HTTPException(422,'Supply an immutable draft-invoice document')
++    if len(canonical(doc))>500000:raise HTTPException(413,'Draft document is too large')
++    checksum=hashlib.sha256(canonical(snap).encode()).hexdigest()
++    record=snap.get('record',{})
++    if not isinstance(record,dict) or not isinstance(snap.get('extra',{}),dict) or not isinstance(snap.get('payload',{}),dict):raise HTTPException(422,'Invalid source document structure')
++    if checksum!=doc.get('checksum') or record.get('product')!=body.source.removeprefix('doaide-') or record.get('id')!=doc.get('record_id'):raise HTTPException(422,'Source checksum or product identity does not match')
++    identifier=doc.get('id');number=doc.get('number')
++    if not isinstance(identifier,str) or not 1<=len(identifier)<=100 or not isinstance(number,str) or not 1<=len(number)<=100:raise HTTPException(422,'Invalid source document identifier')
++    extra=snap.get('extra',{});commercial=extra.get('commercial',{})
++    if not isinstance(commercial,dict):raise HTTPException(422,'Invalid commercial summary')
++    total=extra.get('total_paise',commercial.get('total_paise'))
++    if type(total) is not int or not 0<=total<=100_000_000_000:raise HTTPException(422,'Source document must state its total in integer paise')
++    fingerprint=hashlib.sha256(canonical(body.model_dump()).encode()).hexdigest()
++
++    def existing():
++        rows=db.scalars(select(SuiteHandoff).where(SuiteHandoff.user_id==current_user.id,or_(SuiteHandoff.idempotency_key==idempotency_key,SuiteHandoff.document_id==identifier))).all()
++        if not rows:return None
++        if any(row.request_hash!=fingerprint or row.document_id!=identifier for row in rows):raise HTTPException(409,'Handoff reference was already used for different source content')
++        invoice=db.get(Invoice,rows[0].invoice_id) if rows[0].invoice_id is not None else None
++        if not invoice:raise HTTPException(410,'The source draft was deliberately deleted; a retry cannot recreate it')
++        return {'invoice_id':str(invoice.id),'source_document':identifier,'status':invoice.status}
++
++    prior=existing()
++    if prior:return prior
++    allowed,used,limit=check_quota(db,current_user.id,current_user.plan)
++    if not allowed:raise HTTPException(429,f'Monthly invoice quota exceeded ({used}/{limit})')
++    payload=snap.get('payload',{});buyer=str(payload.get('client') or payload.get('customer') or '')[:255]
++    invoice=Invoice(user_id=current_user.id,status='draft',source='doaide-suite',image_path='',buyer_name=buyer,invoice_number=number,total=Decimal(total)/100,ocr_raw_text=None)
++    db.add(invoice);db.flush()
++    db.add(InvoiceItem(invoice_id=invoice.id,description=str(record.get('title') or number)[:20000],quantity=1,total=Decimal(total)/100))
++    db.add(SuiteHandoff(user_id=current_user.id,invoice_id=invoice.id,idempotency_key=idempotency_key,document_id=identifier,request_hash=fingerprint,source=body.source,snapshot=canonical(doc)))
++    try:
++        db.flush();increment_usage(db,current_user.id);db.commit()
++    except IntegrityError:
++        db.rollback();prior=existing()
++        if prior:return prior
++        raise HTTPException(409,'Concurrent handoff conflict; retry with the same key')
++    return {'invoice_id':str(invoice.id),'source_document':identifier,'status':'draft'}
++
++
++@router.get('/{invoice_id}/suite-source')
++def source_document(invoice_id:int,current_user:User=Depends(get_current_user),db:Session=Depends(get_db)):
++    row=db.scalar(select(SuiteHandoff).where(SuiteHandoff.invoice_id==invoice_id,SuiteHandoff.user_id==current_user.id))
++    if not row:raise HTTPException(404,'Suite source not found')
++    return {'source':row.source,'document':json.loads(row.snapshot)}
+diff --git a/frontend/src/lib/format.js b/frontend/src/lib/format.js
+index f708cd5..0a2e680 100644
+--- a/frontend/src/lib/format.js
++++ b/frontend/src/lib/format.js
+@@ -89,6 +89,7 @@ export function timeAgo(value) {
+ 
+ const STATUS_LABELS = {
+   processing: "Processing",
++  draft: "Draft",
+   extracted: "Extracted",
+   approved: "Approved",
+   rejected: "Rejected",
+diff --git a/frontend/src/pages/InvoiceDetailPage.jsx b/frontend/src/pages/InvoiceDetailPage.jsx
+index a228911..36e262d 100644
+--- a/frontend/src/pages/InvoiceDetailPage.jsx
++++ b/frontend/src/pages/InvoiceDetailPage.jsx
+@@ -130,7 +130,7 @@ export default function InvoiceDetailPage() {
+           </div>
+         </div>
+         <div className="flex gap-2">
+-          {invoice?.status === "extracted" && (
++          {["extracted", "review", "draft"].includes(invoice?.status) && (
+             <>
+               <button type="button" className="btn btn-primary text-sm" onClick={approve} disabled={saving}>Approve</button>
+               <button type="button" className="btn btn-danger text-sm" onClick={reject} disabled={saving}>Reject</button>
+@@ -140,6 +140,9 @@ export default function InvoiceDetailPage() {
+       </div>
+ 
+       <ErrorBanner message={error} onDismiss={() => setError("")} />
++      {invoice?.source === "doaide-suite" && invoice?.status === "draft" && (
++        <p className="panel mb-4">Imported DoAide Suite draft. Review the buyer, line items and tax details before approval. The source document remains retained in the suite.</p>
++      )}
+ 
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+         <div className="panel">
+diff --git a/scripts/migrate_suite_handoffs.py b/scripts/migrate_suite_handoffs.py
+new file mode 100644
+index 0000000..761ea2b
+--- /dev/null
++++ b/scripts/migrate_suite_handoffs.py
+@@ -0,0 +1,38 @@
++"""Add the Suite handoff table to an initialized Invoicer database.
++
++This additive migration deliberately does not rewrite legacy Alembic history.
++It requires the existing users/invoices tables and refuses incompatible schemas.
++Run against an explicitly configured test DATABASE_URL before production rollout.
++"""
++import json
++from pathlib import Path
++import sys
++sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
++from sqlalchemy import inspect
++import app.models  # register referenced models before resolving foreign keys
++from app.core.database import engine
++from app.models.suite_handoff import SuiteHandoff
++
++
++def migrate(target):
++    with target.begin() as connection:
++        inspector=inspect(connection)
++        if not all(inspector.has_table(name) for name in ('users','invoices')):
++            raise ValueError('Initialize the existing Invoicer schema before applying this additive migration')
++        existed=inspector.has_table('suite_handoffs')
++        SuiteHandoff.__table__.create(connection,checkfirst=True)
++        inspector=inspect(connection)
++        columns={column['name']:column for column in inspector.get_columns('suite_handoffs')}
++        expected={column.name for column in SuiteHandoff.__table__.columns}
++        if set(columns)!=expected or not columns['invoice_id']['nullable']:
++            raise ValueError('Existing suite_handoffs columns are incompatible; review the schema before proceeding')
++        unique={tuple(value['column_names']) for value in inspector.get_unique_constraints('suite_handoffs')}
++        if not {('user_id','idempotency_key'),('user_id','document_id')}<=unique:
++            raise ValueError('Suite handoff uniqueness constraints are missing')
++        keys=inspector.get_foreign_keys('suite_handoffs')
++        if not any(key['constrained_columns']==['invoice_id'] and key['referred_table']=='invoices' and key.get('options',{}).get('ondelete','').upper()=='SET NULL' for key in keys):
++            raise ValueError('Invoice deletion must retain a Suite handoff tombstone')
++    return {'migration':'suite-handoffs-v1','created':not existed,'verified':True}
++
++
++if __name__=='__main__':print(json.dumps(migrate(engine),indent=2))
+diff --git a/tests/test_suite_handoff.py b/tests/test_suite_handoff.py
+new file mode 100644
+index 0000000..f2831e1
+--- /dev/null
++++ b/tests/test_suite_handoff.py
+@@ -0,0 +1,77 @@
++import hashlib
++import json
++from copy import deepcopy
++from decimal import Decimal
++import pytest
++from sqlalchemy import select
++from app.models.invoice import Invoice
++from app.models.suite_handoff import SuiteHandoff
++from app.services.usage_service import get_current_month_usage
++
++
++def draft(product='scope', total=123456):
++    snapshot={'record':{'id':'source-record','product':product,'title':'Approved work'},'payload':{'client':'Example Client'},'extra':{'total_paise':total}}
++    checksum=hashlib.sha256(json.dumps(snapshot,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
++    return {'source':'doaide-'+product,'document':{'id':'source-document','record_id':'source-record','kind':'draft-invoice','number':'DRAFT-123','snapshot':snapshot,'checksum':checksum}}
++
++
++@pytest.mark.parametrize('product',['scope','amc','orderdesk'])
++def test_draft_is_exact_owned_idempotent_and_counted_once(auth_client,db_session,product):
++    body=draft(product);headers={'Idempotency-Key':'suite-job-123'}
++    response=auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers)
++    assert response.status_code==201,response.text
++    identifier=int(response.json()['invoice_id']);invoice=db_session.get(Invoice,identifier)
++    assert invoice.total==Decimal('1234.56') and invoice.status=='draft' and invoice.buyer_name=='Example Client'
++    assert invoice.cgst is None and invoice.sgst is None and invoice.igst is None
++    assert get_current_month_usage(db_session,invoice.user_id)==1
++    for key in ('suite-job-123','another-retry-key'):
++        replay=auth_client.post('/api/v1/invoices/drafts',json=body,headers={'Idempotency-Key':key})
++        assert replay.status_code==201 and replay.json()['invoice_id']==str(identifier)
++    assert len(db_session.scalars(select(SuiteHandoff)).all())==1
++    assert get_current_month_usage(db_session,invoice.user_id)==1
++    conflict=auth_client.post('/api/v1/invoices/drafts',json=draft(product,99),headers=headers)
++    assert conflict.status_code==409
++
++
++def test_draft_rejects_forgery_malformed_and_unauthenticated(client,auth_client):
++    headers={'Idempotency-Key':'suite-job-123'}
++    body=draft();body['document']['snapshot']['extra']['total_paise']=1
++    assert auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).status_code==422
++    body=draft();body['document']['snapshot']['record']=[]
++    assert auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).status_code==422
++    auth_client.headers.pop('Authorization')
++    assert auth_client.post('/api/v1/invoices/drafts',json=draft(),headers=headers).status_code==401
++
++
++def test_source_ids_are_account_scoped(auth_client,db_session):
++    headers={'Idempotency-Key':'same-job-reference'};body=draft()
++    first=auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).json()['invoice_id']
++    response=auth_client.post('/api/v1/auth/register',json={'phone':'+919820012346','password':'another-secret-password','name':'Other','email':'other@example.test'})
++    assert response.status_code==201
++    auth_client.headers['Authorization']='Bearer '+response.json()['access_token']
++    second=auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers)
++    assert second.status_code==201 and second.json()['invoice_id']!=first
++    assert auth_client.get('/api/v1/invoices/'+first).status_code==404
++    assert auth_client.get('/api/v1/invoices/'+first+'/suite-source').status_code==404
++
++
++def test_retry_retains_final_status_and_does_not_resurrect_deleted_draft(auth_client,db_session):
++    body=draft();headers={'Idempotency-Key':'source-draft-retry'}
++    identifier=auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).json()['invoice_id']
++    assert auth_client.get('/api/v1/invoices/'+identifier+'/suite-source').json()==body
++    assert auth_client.patch('/api/v1/invoices/'+identifier+'/approve').status_code==200
++    assert auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).json()['status']=='approved'
++    assert auth_client.delete('/api/v1/invoices/'+identifier).status_code==204
++    assert auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).status_code==410
++    assert not db_session.scalars(select(Invoice)).all()
++
++
++def test_additive_migration_preserves_existing_invoice_and_is_repeatable(auth_client,db_session):
++    from scripts.migrate_suite_handoffs import migrate
++    body=draft();headers={'Idempotency-Key':'migration-fixture'}
++    identifier=auth_client.post('/api/v1/invoices/drafts',json=body,headers=headers).json()['invoice_id']
++    engine=db_session.get_bind();db_session.commit()
++    SuiteHandoff.__table__.drop(engine)
++    assert migrate(engine)=={'migration':'suite-handoffs-v1','created':True,'verified':True}
++    assert migrate(engine)=={'migration':'suite-handoffs-v1','created':False,'verified':True}
++    assert db_session.get(Invoice,int(identifier)).total==Decimal('1234.56')
+-- 
+2.50.1 (Apple Git-155)
+

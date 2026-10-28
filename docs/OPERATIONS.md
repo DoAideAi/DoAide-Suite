@@ -87,4 +87,45 @@ OrderDesk/Batch Operations → Correct a physical stock count requires current q
 
 `GET /api/ready` reports schema/database readiness without exposing details. `DOAIDE_REQUIRE_WORKER=true` also requires a poll within 180 seconds or an unexpired running-job lease (up to fifteen minutes). `GET /api/diagnostics` is owner-only and reports safe schema/worker/queue information. Docker health checks use readiness. These endpoints do not replace external alerting or uptime monitoring.
 
-`uv run python scripts/check_reports.py` runs a temporary 1,200-record reporting fixture. It does not modify the live database, create provider transactions or establish production load capacity. Schema 3 remains additive; restore the pre-upgrade backup into a new volume when rolling back to a schema-2 image.
+`uv run python scripts/check_reports.py` runs a temporary 1,200-record reporting fixture. It does not modify the live database, create provider transactions or establish production load capacity. Schema 4 remains additive; restore the pre-upgrade backup into a new volume when rolling back to an older image.
+
+
+## v0.4 connections and access
+
+See [INTEGRATIONS.md](INTEGRATIONS.md) for workspace-specific Invoicer/Contracts credentials, the real Invoicer migration, signed WhatsApp intake and consented Groq transcription. Copy the blank variables from `.env.example`; keep secrets off Git and out of browser bundles.
+
+Owners can set a member's Fees access to Academic in Workspace tools. That member sees an enrollment register without fee amounts, financial documents, receipts, evidence, jobs or accounting exports. Owners retain financial access. This restriction is enforced by API authorization and report filtering.
+
+SOP → Configure automatic new-hire enrollment explicitly enables worker enrollment for new workspace members on the current published procedure. Assignments are deduplicated. It does not acknowledge training or pass assessments for anyone. Disable the policy to stop future automatic assignments. Reminder consent is a separate action.
+
+OrderDesk reservations receive an expiry (24 hours by default, configurable in Delivery). The worker releases expired holds and removes confirmation. Dispatch also checks expiry, so a stopped worker does not make an expired reservation dispatchable. Reprice and confirm before reserving again.
+
+ClaimPack redaction requires a separately uploaded redacted file and reviewer approval against the verified original. Released PDF/ZIP attachments use the approved derivative and retain original/replacement hashes. The private source remains intact. Review the exported packet, factual narrative and any hidden text/metadata in replacement PDFs; merely drawing an opaque box is not secure redaction.
+
+## Authenticated encrypted backups
+
+Use a private key file stored separately from backups. No key is generated or written into the repository automatically.
+
+```bash
+uv run python scripts/encrypted_backup.py --create-key --key-file /private/path/doaide-backup.key
+uv run python scripts/encrypted_backup.py --key-file /private/path/doaide-backup.key --database var/doaide.db --output /private/backup/path/doaide-snapshot.enc
+uv run python scripts/encrypted_backup.py --key-file /private/path/doaide-backup.key --decrypt /private/backup/path/doaide-snapshot.enc --output /private/restore/path/restored.db
+```
+
+Each command creates a new file and refuses overwrite. Keys must be regular private files (0600); encryption uses authenticated Fernet and verifies a round trip. Decryption checks SQLite integrity/foreign keys before publishing a restored file. Keep plaintext restoration isolated. The tool supports snapshots up to 512 MiB; larger deployments need a streaming backup system. Configure private off-site storage, key custody/rotation and backup expiry in the target environment. Fernet authenticates content but exposes token creation time; see [Fernet documentation](https://cryptography.io/en/latest/fernet/).
+
+## Workspace-data erasure
+
+Stop the API and worker, reconcile any running jobs, and review an approved retention/erasure policy before execution. Preview first:
+
+```bash
+uv run python scripts/erase_workspace.py --database var/doaide.db --workspace WORKSPACE_ID --policy APPROVED_POLICY_REFERENCE
+```
+
+Only an explicit repeat with `--execute --confirm-workspace WORKSPACE_ID` erases that workspace's product records, files, documents, financial/stock entries, imports, jobs and operational audit data. It checks foreign keys and compacts SQLite after the transaction. Account identities/memberships and provider-event deduplication identifiers are retained. Separately expire backup copies and handle account closure under the approved policy. This tool has been tested only on disposable fixtures during implementation; no real workspace was erased.
+
+## Request and release checks
+
+The API bounds request bodies before parsing and keeps rate counters in SQLite across processes. Defaults are 600 API and 120 public-link/webhook requests per minute per client IP. Configure limits for your traffic. Forwarded headers are not trusted by the middleware; configure Uvicorn's trusted proxy addresses deliberately so legitimate clients do not share a proxy's bucket. Do not expose diagnostic or administration endpoints through a public bypass.
+
+`uv run python scripts/check_documents.py` creates synthetic PDF fixtures through actual API workflows. Render and review them after layout changes. GitHub Actions runs locked dependency setup, tests, frontend build/audit and isolated container checks; it does not deploy.

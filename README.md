@@ -2,7 +2,7 @@
 
 Operational local workflows for **Scope, Collect, AMC, RFQ, Tender, Handover, OrderDesk, Batch, Fees, Renew, SOP and ClaimPack** in one workspace.
 
-See the [product index](PRODUCT_INDEX.md), [implementation status](docs/BUILD_STATUS.md), [remaining scope](docs/REMAINING_SCOPE.md), the [detailed scope of work](docs/SCOPE_OF_WORK.md), and the [operations runbook](docs/OPERATIONS.md). The app now includes shared teams, operational entities, evidence files, approvals, frozen documents, financial/stock ledgers and durable jobs. Production acceptance and several external integrations remain open; this is not a claim that every original scope requirement is complete.
+See the [product index](PRODUCT_INDEX.md), [implementation status](docs/BUILD_STATUS.md), [remaining scope](docs/REMAINING_SCOPE.md), the [detailed scope of work](docs/SCOPE_OF_WORK.md), and the [operations runbook](docs/OPERATIONS.md). The app now includes shared teams, operational entities, evidence files, approvals, frozen documents, financial/stock ledgers and durable jobs. v0.4 closes the product-feature checklist from v0.3. Production acceptance and additional portfolio adapters remain open; this is not a claim that every original scope requirement is complete.
 
 Repository: [DoAideAi/DoAide-Suite](https://github.com/DoAideAi/DoAide-Suite). All twelve products share this repository and application.
 
@@ -19,7 +19,7 @@ make dev
 
 Open [DoAide locally](http://127.0.0.1:8012). Create or sign in to a local account. Open a product, load a synthetic example or enter details, and **Save record**. Use **Operations** for the actual product workflow; **Files & documents** holds evidence and immutable exports. **Workspace tools** provides portfolio reports, accounting CSV exports, plan/usage controls, team invitations, imports and stock. Fees can reschedule unpaid instalments after receipts. Renew can schedule notice milestones and backup escalation. OrderDesk and Batch include evidence-backed stock-count corrections.
 
-`make dev` starts both the API and job worker. Ctrl+C stops both. Files and PDFs are stored privately in `var/doaide.db`, so database backups include the evidence. Existing v0.1/v0.2 accounts and records migrate additively to schema 3; removed memberships remain removed across restarts. A verified backup of the pre-upgrade database is retained in ignored `var/backups`.
+`make dev` starts both the API and job worker. Ctrl+C stops both. Files and PDFs are stored privately in `var/doaide.db`, so database backups include the evidence. Existing accounts and records migrate additively to schema 4; removed memberships remain removed across restarts. A verified backup of the pre-upgrade database is retained in ignored `var/backups`.
 
 External delivery defaults to disabled. Configure `.env` from `.env.example` and follow the runbook before enabling any provider. The app never treats an unavailable integration as a successful message, invoice, payment or submission.
 
@@ -56,11 +56,12 @@ The API reference is available at `/docs`. The frontend can be edited with `npm 
 | `backend/documents.py` | Private ingestion, extraction, OCR and frozen PDF/evidence packets |
 | `backend/commercial.py`, `billing.py` | Plans, budgets, Stripe test checkout/portal and authoritative reconciliation |
 | `backend/reports.py`, `renewals.py`, `inventory.py`, `diagnostics.py` | Portfolio/accounting reports, notice automation, stock corrections and readiness |
-| `backend/worker.py`, `webhooks.py` | Durable outbox, provider adapters and signed reconciliation |
+| `backend/worker.py`, `webhooks.py`, `whatsapp.py`, `recordings.py`, `portfolio_connections.py` | Durable jobs, signed callbacks, audio review and workspace-scoped service adapters |
+| `backend/workflow_catalog.py`, `workflow_extensions.py`, `access.py`, `security.py` | v0.4 workflow additions, academic permissions and request boundaries |
 | `frontend/src/Operations.jsx` | Operational UI, workspace tools and limited external portals |
 | `tests/test_commercial_reports.py` | Budget races, billing retries/signatures, rescheduling, report reconciliation, stock corrections and restart permissions |
 | `tests/test_operations.py` | Product journeys, boundaries, concurrency and provider failure/replay tests |
-| `scripts/backup.py`, `retention.py`, `dev.py` | Local lifecycle and maintenance |
+| `scripts/backup.py`, `encrypted_backup.py`, `erase_workspace.py`, `retention.py`, `dev.py` | Backups/encryption, policy-driven erasure and local lifecycle |
 | `Dockerfile`, `compose.production.yml` | Off-server build and immutable deployment definitions |
 
-Existing DoAide product repositories and production services were not changed. Follow [STRATEGY.md](STRATEGY.md) for eventual releases: build off-server, deploy immutable runtime images, and verify restore/rollback.
+The Invoicer checkout has a separately committed draft-adapter branch; the complete patch is included under `integrations/invoicer`. Production services were not changed. Follow [STRATEGY.md](STRATEGY.md) for eventual releases: build off-server, deploy immutable runtime images, and verify restore/rollback.

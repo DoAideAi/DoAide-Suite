@@ -19,7 +19,7 @@ def install_diagnostics(app,path,current_user):
     def readiness():
         try:
             with database(path) as db:state=health(db)
-            ready=state['schema_version']==3 and (os.environ.get('DOAIDE_REQUIRE_WORKER','false')!='true' or state['worker_healthy'])
+            ready=state['schema_version']==4 and (os.environ.get('DOAIDE_REQUIRE_WORKER','false')!='true' or state['worker_healthy'])
         except Exception:ready=False
         return JSONResponse({'ready':ready},status_code=200 if ready else 503)
 

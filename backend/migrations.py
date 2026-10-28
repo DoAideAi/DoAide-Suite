@@ -3,7 +3,7 @@ import json
 
 
 def migrate(db):
-    if db.execute('PRAGMA user_version').fetchone()[0]>3:
+    if db.execute('PRAGMA user_version').fetchone()[0]>4:
         raise RuntimeError('This database requires a newer DoAide release')
     db.executescript("""
     CREATE TABLE IF NOT EXISTS workspaces (
@@ -133,6 +133,17 @@ def migrate(db):
     CREATE TABLE IF NOT EXISTS runtime_status (
         name TEXT PRIMARY KEY, last_seen TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS member_access (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id), user_id TEXT NOT NULL REFERENCES users(id),
+        fees_mode TEXT NOT NULL CHECK(fees_mode IN ('financial','academic')),
+        PRIMARY KEY(workspace_id,user_id)
+    );
+    CREATE TABLE IF NOT EXISTS ledger_evidence (
+        entry_id TEXT PRIMARY KEY REFERENCES ledger(id), method TEXT NOT NULL, file_id TEXT REFERENCES files(id)
+    );
+    CREATE TABLE IF NOT EXISTS request_limits (
+        bucket TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS ledger_record ON ledger(record_id,created_at);
     CREATE INDEX IF NOT EXISTS jobs_workspace_created ON jobs(workspace_id,created_at);
     CREATE INDEX IF NOT EXISTS documents_record ON documents(record_id,created_at);
@@ -141,7 +152,7 @@ def migrate(db):
     for user in db.execute("SELECT * FROM users").fetchall():
         ensure_workspace(db, dict(user))
     db.execute("INSERT OR IGNORE INTO record_workspaces SELECT id, user_id FROM records")
-    db.execute("PRAGMA user_version = 3")
+    db.execute("PRAGMA user_version = 4")
 
 
 def ensure_workspace(db, user):
@@ -157,6 +168,8 @@ def record_access(db, record_id, user):
                      (record_id, user['workspace_id'])).fetchone()
     if not row:
         raise HTTPException(404, 'Record not found')
+    if row['product']=='fees' and user.get('fees_access')=='academic':
+        raise HTTPException(403, 'Academic access excludes fee agreements, receipts and financial evidence; use the enrollment register')
     return dict(row)
 
 

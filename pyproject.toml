@@ -1,9 +1,10 @@
 [project]
 name = "doaide-suite"
-version = "0.3.0"
+version = "0.4.0"
 description = "Operational workspaces for twelve DoAide products"
 requires-python = ">=3.12"
 dependencies = [
+    "cryptography>=46,<51",
     "fastapi>=0.115,<1",
     "httpx>=0.28.1",
     "pillow>=13.0.0",

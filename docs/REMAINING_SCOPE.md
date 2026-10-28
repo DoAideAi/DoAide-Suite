@@ -1,30 +1,40 @@
-# Remaining product scope
+# Remaining integration and release acceptance
 
-28 October 2026 · v0.3 follow-up checklist
+28 October 2026 · v0.4
 
-All twelve products have executable local workflows. They are not complete against every requirement in the original scopes. This list records known functional gaps as well as external acceptance dependencies; it is not a percentage-complete estimate. Keep the original scopes as the acceptance baseline.
+The v0.3 product-feature checklist has been implemented in the shared application. This does **not** establish that the twelve original scopes are production-complete. Original requirements remain in [SCOPE_OF_WORK.md](SCOPE_OF_WORK.md) and the individual scopes.
 
-| Product | Known remaining implementation / acceptance work |
+## Product-feature checklist addressed
+
+| Product | Implementation added in v0.4 |
 | --- | --- |
-| Scope | SCOPE-03: richer assisted baseline/request comparison with explicit uncertainty; current assessment is human-entered. SCOPE-08: implement and validate the real Invoicer/Contracts connection; the current invoice bridge is a documented, mock-tested contract. Confirm final commercial/tax document templates with a pilot. |
-| Collect | COLLECT-04/05: structured promise amounts, ownership/outcomes and fuller dispute evidence/next-action tracking. COLLECT-06: configurable reminder sequences with contact-frequency limits; individual eligible reminders are implemented. COLLECT-08: provider delivery/bounce reconciliation beyond SMTP acceptance and fuller customer history statements. |
-| AMC | AMC-01/02: manufacturer-scoped asset serial uniqueness, richer signed plan/service-window versions. AMC-04/05: customer service windows, technician work-order/checklist/readings UX and assigned-work-only technician access. AMC-07: distinct renewal offer/acceptance/invoicing lifecycle; next-period creation exists. Validate customer site/asset portal boundaries. |
-| RFQ | RFQ-01/02: delivery/request metadata and structured quote validity/payment terms/source lines. RFQ-04: independently configurable freight/goods tax, duties and packaging treatment. RFQ-06: explicit clarification threads and revision comparison. RFQ-08: dedicated comparison spreadsheet, beyond portfolio CSV and approved purchase-order PDF. |
-| Tender | TENDER-01: clarification deadlines and richer procurement-portal metadata. TENDER-03/04: broader assisted extraction and explicit mandatory/conditional/informational interpretation. Current extraction finds cited candidate lines and requires human verification. TENDER-06: targeted amendment impact analysis; current amendment invalidates all reviews conservatively. Validate bid packet templates. |
-| Handover | HANDOVER-01/02: reusable inspection templates, richer contact/category metadata and camera-specific mobile UX. HANDOVER-03/04: acknowledged/in-repair steps and bulk assignment queues. HANDOVER-06: final branded room/severity layouts and pilot photo/report review. Existing repair, independent verification, limited contractor links, acceptance and reopening remain operational. |
-| OrderDesk | ORDERDESK-02/03: authorized WhatsApp/voice adapters, richer dates/variants/substitutions and candidate review. ORDERDESK-06: freight/delivery/backorder workflows and authorized price overrides. ORDERDESK-07: reservation expiry and verified sales-order/invoice adapter. Manual exact-match orders, confirmation, reservations, cancellation, dispatch and count corrections exist. |
-| Batch | BATCH-01/04: structured packaging/labor/overhead categories and richer effective recipe versions. BATCH-07: additional cost correction/reversal policies beyond material returns and evidenced physical-count adjustments. BATCH-08: pilot-approved printable labels and external affected-order integration. Validate quality exception and disposal rules before adding them. |
-| Fees | FEES-02/03: richer concession categories and configured late-fee policy assessment; approved discounts and post-payment rescheduling exist. FEES-04/05: structured payment method/evidence links and withdrawal lifecycle. FEES-08: academic/finance permission separation beyond workspace roles. Aging, ledger reconciliation, receipts and guardian-limited statements are implemented. |
-| Renew | RENEW-02/05/06: explicit term start/length, negotiated-term history, effective cancellation dates and renewal request vs confirmation lifecycle. Notice schedules, owner acknowledgement, backup escalation, verified usage/duplicate/price flags, calendar/portfolio exports and evidenced rollover are now implemented. Validate actual terms and business-day calendars. |
-| SOP | SOP-01/02/03: richer collections/audience/tools/escalation/effective dates, recording/transcription adapters and reusable branching templates. SOP-05/07: training reminders, team/new-hire enrollment and designated supervisor signoff. SOP-08: controlled offline-copy expiry/refresh policy. Exact-version acknowledgement, publication, assessments, retraining history and current/stale reports exist. |
-| ClaimPack | CLAIMPACK-01/02: richer ownership/deadline-source/applicability metadata and maintained provider template catalogue. CLAIMPACK-04/05: explicit statement provenance and conflicting-date analysis. Validate actual provider packet rules and redactions; provider submission remains manual until an authorized adapter is configured. |
+| Scope | Cited baseline comparison, uncertainty/review, Contracts clause import, real Invoicer draft endpoint |
+| Collect | Case amounts/owners/evidence/outcomes, reminder sequences/contact caps, delivery reconciliation, customer history |
+| AMC | Manufacturer/serial uniqueness, installation metadata, signed plans/windows, assigned technician links, start/before evidence/readings, renewal offer/acceptance/invoice |
+| RFQ | Request/quote metadata, freight/packaging taxes and duties, clarification/revision/ranking history, comparison CSV/PDF |
+| Tender | Portal/clarification metadata, mandatory/conditional/informational review and targeted amendments |
+| Handover | Templates, contacts/categories, repair progress/bulk assignment, camera input and room/severity/photo reports |
+| OrderDesk | Signed WhatsApp text/audio, reviewed transcription/candidates, variants/substitutions, overrides, freight/backorders, expiring reservations and invoice handoff |
+| Batch | Effective recipes, structured costs, corrections/reversals, disposal, affected-order references and labels |
+| Fees | Concessions, capped late-fee assessments, payment evidence, withdrawal and academic/finance permissions |
+| Renew | Term start/length, negotiation history, renewal requests/confirmations and effective cancellation |
+| SOP | Audience/tools/effective dates, recording review, branching templates, team/new-hire enrollment, reminders, signoff and offline expiry |
+| ClaimPack | Ownership/deadline sources, reviewed reusable templates, provenance/conflicts and approved attachment redactions |
 
-## Shared release acceptance still open
+## Connections still open
 
-- Configure SMTP, Razorpay and Stripe test accounts/prices and exercise their real delivery, checkout, portal and callback behavior. Current tests use synthetic fixtures and mocked providers; no actual charges or outbound messages were made.
-- Implement remaining DoAide portfolio adapters against inspected service contracts. No existing production service was modified.
-- Complete abuse controls, deployment/database review, malware scanner configuration, encrypted backup destination, comprehensive erasure policy, external monitoring and target-host restore/rollback drills.
-- Complete desktop/mobile interaction and accessibility acceptance. The browser tool's local-URL policy blocked current browser QA; older screenshots do not validate v0.3. Keyboard focus containment/Escape behavior was added to the workspace dialog but remains browser-unverified.
-- Obtain representative pilot inputs, approved document formats and acceptance decisions for each product. The report fixture measures local query performance only.
+- **Implemented, awaiting configured-account acceptance:** SMTP/recovery, Razorpay, Stripe test billing, Groq transcription, Meta WhatsApp intake/media, Contracts clause import and Invoicer draft creation. No real transactions or messages were sent. See [INTEGRATIONS.md](INTEGRATIONS.md).
+- **Invoicer deployment dependency:** the existing service lacked a draft-create route. The real authenticated endpoint, migration and tests now exist on its local `codex/suite-invoice-handoff` branch. The complete patch is included here. Apply/migrate a test deployment and configure the workspace connection before accepting the deployed integration.
+- **Remaining portfolio adapter implementation:** the broader scopes name Scheduler availability, Inventory catalogue/parts/lot receiving, Desk conversations/orders, Realty property references, Khata reconciliation, Proposals templates, Payroll rosters and course enrollment sources. These native adapters are not implemented by v0.4. Current workflows use explicit entries, retained files, CSV and external references. These dependencies are not marked complete.
+- Inspection confirmed that Inventory exposes product/warehouse stock rather than the suite's lot-quality/expiry ledger, and Scheduler booking creation sends confirmations without the suite's retry-safe contract. Connecting them requires explicit data ownership/mapping and service contracts. A read-only stock snapshot must not be represented as synchronized inventory. Their production services were not changed.
+- Direct vendor cancellation, tender-portal automation and automatic dispute submission remain later, separately authorized integrations, as stated in the original scopes.
 
-Implemented commercial controls now cover tenant product plans, atomic usage admission, Stripe test checkout/portal/reconciliation, period expiry and accounting exports. Production pricing, tax policy, live billing and provider-account acceptance are separate remaining decisions.
+## Release acceptance still open
+
+1. **Current browser/mobile/accessibility acceptance:** the browser tool rejected the local URL. API/build/PDF checks pass, but historical screenshots do not certify v0.4 interaction or accessibility.
+2. **Pilot/domain review:** representative inputs and approved tax/invoice documents, service plans, tender interpretation, provider packet/redaction rules, concessions/late fees, disposal, training and cancellation policies. The app records human decisions; it does not establish legal or third-party acceptance.
+3. **Production environment:** validate deployment/database capacity, trusted proxy configuration, malware scanning, external monitoring/alerts, private off-site encrypted backups, key custody and target-host restore/rollback. The local container check is not production load acceptance.
+4. **Retention/erasure policy:** encryption and workspace-data erasure tooling are implemented and tested. Approve actual retention periods, backup expiry and account closure before executing erasure. Account identities/memberships and provider-event deduplication identifiers remain outside the workspace-data eraser.
+5. **Provider acceptance:** configured test credentials, prices and callback URLs are required. Enqueue/SMTP acceptance does not prove customer delivery; an exported packet is not a submission; a draft is not a finalized tax invoice.
+
+No production deployment has been performed. Full original-scope acceptance remains open.

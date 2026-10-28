@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from decimal import Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -16,7 +17,7 @@ from docx import Document
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image as PDFImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, PageBreak, Image as PDFImage
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
@@ -109,7 +110,7 @@ def ocr_file(file):
         return '\n'.join(chunks)[:MAX_TEXT]
 
 
-def pdf_document(document, public=False):
+def pdf_document(document, public=False, photos=None):
     snap=json.loads(document['snapshot']) if isinstance(document['snapshot'],str) else document['snapshot']
     output=io.BytesIO();styles=getSampleStyleSheet()
     # A Unicode font keeps customer names readable on macOS and Linux.
@@ -122,9 +123,13 @@ def pdf_document(document, public=False):
     for style in styles.byName.values():style.fontName=font
     styles['BodyText'].fontSize=9;styles['BodyText'].leading=13;styles['BodyText'].spaceAfter=5
     styles['Heading2'].fontSize=12;styles['Heading2'].textColor=colors.HexColor('#365544')
-    title=ParagraphStyle('DoAideTitle',parent=styles['Title'],fontSize=23,leading=29,alignment=TA_LEFT,textColor=colors.HexColor('#20382b'),spaceAfter=12)
+    label=document['kind']=='traceability-label'
+    if label:
+        styles['BodyText'].fontSize=8;styles['BodyText'].leading=11
+        styles['Heading2'].fontSize=10
+    title=ParagraphStyle('DoAideTitle',parent=styles['Title'],fontSize=14 if label else 23,leading=18 if label else 29,alignment=TA_LEFT,textColor=colors.HexColor('#20382b'),spaceAfter=8 if label else 12)
     def p(value,style='BodyText'):return Paragraph(escape(str(value)).replace('\n','<br/>'),styles[style])
-    story=[p('DOAIDE  /  '+document['kind'].replace('-',' ').upper(),'Heading2'),Paragraph(escape(snap['record']['title']),title),p(document['number']+' · '+document['created_at'][:10]),p('Source version '+str(document['record_version'])+' · SHA-256 '+document['checksum']),Spacer(1,10)]
+    story=[p('DOAIDE  /  '+document['kind'].replace('-',' ').upper(),'Heading2'),Paragraph(escape(snap['extra']['product'] if label else snap['record']['title']),title),p(document['number']+' · '+document['created_at'][:10]),p('Source version '+str(document['record_version'])+' · SHA-256 '+document['checksum']),Spacer(1,10)]
     def section(label,value):
         story.append(p(label,'Heading2'))
         render(value)
@@ -144,7 +149,37 @@ def pdf_document(document, public=False):
                     story.append(p(f'Item {n}','Heading3'));render(item,depth+1)
                 else:story.append(p(item))
         else:story.append(p(value))
-    if document['kind']=='fee-schedule-amendment':
+    if document['kind']=='traceability-label':
+        section('Batch traceability',snap['extra'])
+        story.append(p('Confirm current release / recall status in DoAide before dispatch. This label records status at issue time.'))
+    elif document['kind']=='amc-renewal-offer':
+        section('Customer',snap['payload']['customer'])
+        offer=snap['extra']
+        section('Proposed service period and terms',{'start':offer['start'],'end':offer['end'],'included_visits':offer['included'],'contract_value_paise':int(Decimal(str(offer['value']))*100),'approval_contact':offer['contact'],'offer_valid_until':offer['valid_until'],'terms':offer['terms']})
+        story.append(p('Acceptance applies to this exact offer version. The existing contract continues under its own terms.'))
+    elif document['kind']=='handover':
+        section('Site',snap['payload'].get('site',snap['record']['title']))
+        grouped={}
+        for item in snap['items']:
+            if item['kind']=='issue':grouped.setdefault(item['data']['room'],[]).append(item['data'])
+        order={'Critical':0,'Major':1,'Minor':2}
+        for room_number,(room,issues) in enumerate(sorted(grouped.items())):
+            if room_number:story.append(PageBreak())
+            story.append(p(room,'Heading2'))
+            grid=[[p(x) for x in ('Issue','Severity','Status','Verification / waiver')]]
+            for issue in sorted(issues,key=lambda x:order.get(x['severity'],3)):
+                grid.append([p(issue['description']),p(issue['severity']),p(issue.get('_status','open')),p(issue.get('_verification') or issue.get('_waiver') or issue.get('_repair_note',''))])
+            table=Table(grid,colWidths=[210,65,70,166],repeatRows=1,hAlign='LEFT')
+            table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8eee5')),('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),8),('LINEBELOW',(0,0),(-1,-1),.4,colors.HexColor('#d6ded1'))]))
+            story.extend([table,Spacer(1,10)])
+            for issue in issues:
+                for key in ('file_id','_repair_file'):
+                    photo=(photos or {}).get(issue.get(key))
+                    if not photo:continue
+                    image=Image.open(io.BytesIO(photo));width,height=image.size;scale=min(245/width,180/height,1)
+                    story.append(KeepTogether([p(issue['description']+' · '+('repair evidence' if key=='_repair_file' else 'inspection evidence')),PDFImage(io.BytesIO(photo),width=width*scale,height=height*scale),Spacer(1,10)]))
+        story.append(p('Minor waivers listed here require client acceptance of this exact handover. Original evidence is retained in the authorized evidence packet.'))
+    elif document['kind']=='fee-schedule-amendment':
         financial=snap['financial'];amendment=snap['extra'];payload=snap['payload']
         section('Agreement amendment',{'student':payload['student'],'course':payload['course'],'amendment_number':amendment['number'],'approved_by':amendment['approved_by'],'approved_at':amendment['at'][:10],'reason':amendment['reason']})
         def schedule_table(label,rows):
@@ -168,7 +203,7 @@ def pdf_document(document, public=False):
             payload={k:v for k,v in payload.items() if k in ('student','course','customer','invoice')}
             entry=next((e for e in snap.get('financial',{}).get('entries',[]) if e['id']==snap.get('extra',{}).get('entry_id')),None)
             if entry:
-                section('Receipt / adjustment',{'reference':entry['reference'],'type':entry['kind'],'amount_paise':entry['amount'],'date':entry['date'],'source':entry['note'],'recorded_by':entry['actor']})
+                section('Receipt / adjustment',{'reference':entry['reference'],'type':entry['kind'],'amount_paise':entry['amount'],'method':entry.get('method'),'date':entry['date'],'source':entry['note'],'recorded_by':entry['actor']})
         section('Record details',payload)
         if snap.get('financial'):section('Financial statement · INR',{k:v for k,v in snap['financial'].items() if k!='entries'})
         grouped={}
@@ -188,8 +223,8 @@ def pdf_document(document, public=False):
         if snap.get('extra'):section('Document details',snap['extra'])
         if snap.get('files') and not public:section('Evidence manifest',snap['files'])
     def footer(canvas,doc):
-        canvas.saveState();canvas.setFont(font,8);canvas.setFillColor(colors.HexColor('#68756d'));canvas.drawString(42,28,document['number']);canvas.drawRightString(553,28,f'Page {doc.page}');canvas.restoreState()
-    SimpleDocTemplate(output,pagesize=(595,842),rightMargin=42,leftMargin=42,topMargin=42,bottomMargin=48,title=snap['record']['title'],author='DoAide').build(story,onFirstPage=footer,onLaterPages=footer)
+        canvas.saveState();canvas.setFont(font,6 if label else 8);canvas.setFillColor(colors.HexColor('#68756d'));canvas.drawString(18 if label else 42,12 if label else 28,document['number']);canvas.drawRightString(265 if label else 553,12 if label else 28,f'Page {doc.page}');canvas.restoreState()
+    SimpleDocTemplate(output,pagesize=(283.46,425.20) if label else (595,842),rightMargin=18 if label else 42,leftMargin=18 if label else 42,topMargin=18 if label else 42,bottomMargin=26 if label else 48,title=snap['record']['title'],author='DoAide').build(story,onFirstPage=footer,onLaterPages=footer)
     return output.getvalue()
 
 
@@ -202,12 +237,16 @@ def packet_zip(db,document):
             if not row:raise DomainError('A file in this immutable manifest is unavailable')
             if not row['content']:raise DomainError('Evidence was removed under the recorded retention policy; the immutable manifest remains available')
             archive.writestr('evidence/'+row['id'][:8]+'-'+row['name'],row['content']);manifest.append({k:row[k] for k in ('id','name','checksum','size')})
-        archive.writestr('manifest.json',json.dumps({'document':document['number'],'snapshot_sha256':document['checksum'],'files':manifest},indent=2))
+        archive.writestr('manifest.json',json.dumps({'document':document['number'],'snapshot_sha256':document['checksum'],'files':manifest,'approved_attachment_redactions':snap.get('extra',{}).get('approved_attachment_redactions',[])},indent=2))
     return out.getvalue()
 
 
 def freeze_pdf(db,document):
-    content=pdf_document(document)
+    photos={}
+    if document['kind']=='handover':
+        for row in db.execute("SELECT id,content FROM files WHERE record_id=? AND mime LIKE 'image/%'",(document['record_id'],)):
+            if row['content']:photos[row['id']]=row['content']
+    content=pdf_document(document,photos=photos)
     snap=json.loads(document['snapshot'])
     if document['kind']=='claim-packet':
         writer=PdfWriter();writer.append(PdfReader(io.BytesIO(content)))
@@ -230,6 +269,8 @@ def freeze_pdf(db,document):
         template=next(i['data'] for i in snap['items'] if i['kind']=='template')
         if len(content)>int(template['max_mb'])*1024*1024:raise DomainError('Generated PDF exceeds the provider packet size limit')
     db.execute('INSERT INTO document_blobs VALUES (?,?,?)',(document['id'],content,hashlib.sha256(content).hexdigest()))
+    public=pdf_document(document,public=True,photos=photos)
+    db.execute('INSERT OR IGNORE INTO public_document_blobs VALUES (?,?,?)',(document['id'],public,hashlib.sha256(public).hexdigest()))
     return content
 
 

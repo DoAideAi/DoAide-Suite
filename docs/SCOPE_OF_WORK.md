@@ -25,7 +25,7 @@ The local modular application now contains operational workflows for all twelve 
 
 ## Architecture and repository decision
 
-The source lives under products/doaide-suite in the current DoAide workspace. This keeps all newly authorized work reviewable without altering existing product checkouts or production deployments. The first version uses FastAPI, Python's SQLite interface, and React/Vite, consistent with the broad application patterns already present in DoAide. Currency calculations use Decimal. Product input contracts drive validation and form rendering; each product has a separate calculation branch with product-specific rules.
+The source lives at /Users/dev/projects/doaide/DoAide-Suite, with the former products/doaide-suite path retained as a compatibility symlink. The Invoicer draft adapter is implemented on a separate local branch and distributed as a patch in integrations/invoicer. Production deployments have not been changed. The first version uses FastAPI, Python's SQLite interface, and React/Vite, consistent with the broad application patterns already present in DoAide. Currency calculations use Decimal. Product input contracts drive validation and form rendering; each product has a separate calculation branch with product-specific rules.
 
 SQLite is the local operational store. Records belong to shared workspaces, with owner/operator/reviewer/viewer memberships and invitations. Separate expiring links scope external client, guardian and contractor access. Email verification and password recovery use expiring one-use links through the configurable email queue; provider delivery still needs pilot validation. Sessions use random opaque tokens, server-side hashed token storage, HttpOnly cookies, and an expiry. Passwords are scrypt-hashed with per-password salts. This is a local development authentication implementation, not a completed identity platform.
 
@@ -76,7 +76,7 @@ This sequence is a dependency plan, not an instruction to ship every product sim
 
 All twelve products have operational local workflows described in their current implementation sections. External sending is disabled by default; credentials and explicit server configuration are required to enable provider jobs. No live messages, payments, bids, disputes or production deployments were performed during development.
 
-The suite is not certified as completing every production requirement in this scope. Configured email/recovery delivery, existing-product adapters, configured billing-provider acceptance, pilot-approved templates and current browser acceptance remain open. Additional local product gaps are tracked in REMAINING_SCOPE.md. Plan entitlements, usage budgets, test-mode billing adapters and reporting are now implemented. Scope requirements are retained rather than silently reduced. See BUILD_STATUS.md for tested behavior and remaining release work.
+The suite is not certified as completing every production requirement in this scope. Configured email/recovery delivery, existing-product adapters, configured billing-provider acceptance, pilot-approved templates and current browser acceptance remain open. The v0.4 workflow additions close the product-feature checklist from v0.3; remaining portfolio adapters and release acceptance are tracked in REMAINING_SCOPE.md. Plan entitlements, usage budgets, test-mode billing adapters and reporting are now implemented. Scope requirements are retained rather than silently reduced. See BUILD_STATUS.md for tested behavior and remaining release work.
 
 ## Dependency and scope management
 

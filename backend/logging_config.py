@@ -5,7 +5,7 @@ import re
 
 def redact_path(path):
     path=re.sub(r'(/api/(?:portal|contractor)/)[^/? ]+',r'\1[redacted]',str(path))
-    return re.sub(r'([?&](?:token|portal|invite|task)=)[^& ]+',r'\1[redacted]',path)
+    return re.sub(r'([?&](?:token|portal|invite|task|hub\.verify_token)=)[^& ]+',r'\1[redacted]',path)
 
 
 class PrivateAccessFilter(logging.Filter):

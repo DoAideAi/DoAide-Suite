@@ -18,6 +18,7 @@ RUN groupadd --gid 10001 doaide && useradd --uid 10001 --gid 10001 --create-home
 WORKDIR /app
 COPY --from=dependencies /app/.venv /app/.venv
 COPY backend /app/backend
+COPY scripts/backup.py scripts/encrypted_backup.py scripts/erase_workspace.py scripts/retention.py /app/scripts/
 COPY docs/scopes /app/docs/scopes
 COPY --from=web /build/dist /app/frontend/dist
 RUN mkdir /data && chown doaide:doaide /data

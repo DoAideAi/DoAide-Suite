@@ -14,3 +14,5 @@ tmp/
 .ruff_cache/
 .coverage
 htmlcov/
+*.key
+*.enc

@@ -1,13 +1,22 @@
 {
-  "checked_at": "2026-10-28T12:03:18.276040+00:00",
-  "version": "0.3.0",
-  "api": "ready",
-  "worker": "healthy",
-  "existing_records": 13,
-  "report_records": 13,
-  "products": 12,
-  "billing_mode": "local",
-  "schema_version": 3,
-  "accounting_csv": "passed",
-  "browser_qa": "still blocked by browser URL policy; API checks only"
+  "version": "0.4.0",
+  "schema_version": 4,
+  "backup": "var/backups/doaide-v04-cutover-20261028.db",
+  "before": {
+    "users": 2,
+    "records": 16,
+    "audit_events": 18
+  },
+  "after": {
+    "users": 2,
+    "records": 16,
+    "audit_events": 18
+  },
+  "integrity": "ok",
+  "foreign_keys": "ok",
+  "ready": true,
+  "worker_healthy": true,
+  "external_delivery": "disabled",
+  "billing": "local",
+  "browser_acceptance": "unverified: local URL rejected by browser policy"
 }
