@@ -1,0 +1,526 @@
+From 46ffc65eba293acab0fedb1a4023fb4ce90af27c Mon Sep 17 00:00:00 2001
+From: r2st <102911930+r2st@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 23:52:22 +0530
+Subject: [PATCH] Add authoritative decimal lot ledger and production receipts
+
+---
+ backend/app/main.py               |   2 +
+ backend/app/models/__init__.py    |   2 +
+ backend/app/models/suite_lot.py   |  34 +++++
+ backend/app/routers/suite_lots.py | 203 ++++++++++++++++++++++++++++++
+ backend/app/routers/warehouses.py |   9 ++
+ backend/scripts/migrate_suite.py  |  28 +++--
+ backend/tests/test_suite_lots.py  | 109 ++++++++++++++++
+ frontend/src/pages/StockPage.jsx  |  32 +++++
+ 8 files changed, 407 insertions(+), 12 deletions(-)
+ create mode 100644 backend/app/models/suite_lot.py
+ create mode 100644 backend/app/routers/suite_lots.py
+ create mode 100644 backend/tests/test_suite_lots.py
+
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 2410d9e..183cf5c 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -17,6 +17,7 @@ from app.routers import (
+     sales_orders,
+     stock,
+     suite,
++    suite_lots,
+     stock_adjustments,
+     suppliers,
+     warehouses,
+@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
+     app.include_router(warehouses.router)
+     app.include_router(stock.router)
+     app.include_router(suite.router)
++    app.include_router(suite_lots.router)
+     app.include_router(suppliers.router)
+     app.include_router(customers.router)
+     app.include_router(purchase_orders.router)
+diff --git a/backend/app/models/__init__.py b/backend/app/models/__init__.py
+index e28073f..6145d7b 100644
+--- a/backend/app/models/__init__.py
++++ b/backend/app/models/__init__.py
+@@ -34,3 +34,5 @@ __all__ = [
+ ]
+ 
+ from app.models.suite_reservation import SuiteReservation
++
++from app.models.suite_lot import SuiteLot, SuiteBatch, SuiteLotCommand
+diff --git a/backend/app/models/suite_lot.py b/backend/app/models/suite_lot.py
+new file mode 100644
+index 0000000..5019319
+--- /dev/null
++++ b/backend/app/models/suite_lot.py
+@@ -0,0 +1,34 @@
++from sqlalchemy import JSON, String, UniqueConstraint
++from sqlalchemy.orm import Mapped, mapped_column
++from app.core.database import Base
++from app.models.mixins import BusinessScopedMixin, TimestampMixin
++
++
++class SuiteLot(Base, BusinessScopedMixin, TimestampMixin):
++    __tablename__='suite_lots'
++    __table_args__=(UniqueConstraint('business_id','warehouse_id','sku',name='uq_suite_lot'),)
++    id: Mapped[int]=mapped_column(primary_key=True)
++    warehouse_id: Mapped[int]=mapped_column()
++    sku: Mapped[str]=mapped_column(String(240))
++    name: Mapped[str]=mapped_column(String(240))
++    unit: Mapped[str]=mapped_column(String(100))
++    quantity: Mapped[str]=mapped_column(String(60))
++    details: Mapped[dict]=mapped_column(JSON)
++
++
++class SuiteBatch(Base, BusinessScopedMixin, TimestampMixin):
++    __tablename__='suite_batches'
++    __table_args__=(UniqueConstraint('business_id','warehouse_id','reference',name='uq_suite_batch'),)
++    id: Mapped[int]=mapped_column(primary_key=True)
++    warehouse_id: Mapped[int]=mapped_column()
++    reference: Mapped[str]=mapped_column(String(160))
++    details: Mapped[dict]=mapped_column(JSON,default=dict)
++
++
++class SuiteLotCommand(Base, BusinessScopedMixin, TimestampMixin):
++    __tablename__='suite_lot_commands'
++    __table_args__=(UniqueConstraint('business_id','reference',name='uq_suite_lot_command'),)
++    id: Mapped[int]=mapped_column(primary_key=True)
++    reference: Mapped[str]=mapped_column(String(160))
++    fingerprint: Mapped[str]=mapped_column(String(64))
++    result: Mapped[dict]=mapped_column(JSON)
+diff --git a/backend/app/routers/suite_lots.py b/backend/app/routers/suite_lots.py
+new file mode 100644
+index 0000000..c4649d7
+--- /dev/null
++++ b/backend/app/routers/suite_lots.py
+@@ -0,0 +1,203 @@
++"""Authoritative decimal lot ledger with atomic production and retained receipts."""
++from datetime import date
++from decimal import Decimal
++import hashlib
++import json
++from typing import Literal
++from fastapi import APIRouter, Depends, HTTPException, Query
++from pydantic import BaseModel, ConfigDict, Field
++from sqlalchemy.orm import Session
++from app.core.database import get_db
++from app.core.deps import get_current_business, require_staff
++from app.models.user import User, UserRole
++from app.models.warehouse import Warehouse
++from app.models.suite_lot import SuiteLot, SuiteBatch, SuiteLotCommand
++from app.services.reservations import lock_stock
++from app.routers.suite import expected_business
++
++router=APIRouter(prefix='/suite/lots',tags=['suite-lots'],dependencies=[Depends(expected_business),Depends(require_staff)])
++
++
++def fail(message):raise HTTPException(409,message)
++
++def quantity(value,positive=False):
++    try:result=Decimal(str(value))
++    except Exception:raise HTTPException(422,'Invalid decimal quantity')
++    if not result.is_finite() or result < 0 or result > Decimal('1000000000') or result.as_tuple().exponent < -6 or positive and result <= 0:
++        raise HTTPException(422,'Quantity must be positive/nonnegative with at most six decimal places')
++    return result
++
++
++def digest(data):return hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
++
++
++def load(db,business,warehouse,sku):return db.query(SuiteLot).filter_by(business_id=business,warehouse_id=warehouse,sku=sku).first()
++
++
++def holds(db,business,warehouse,sku):
++    return sum((quantity(row.details.get('holds',{}).get(sku,0)) for row in db.query(SuiteBatch).filter_by(business_id=business,warehouse_id=warehouse)),Decimal(0))
++
++
++def snapshot(db,row):
++    d=row.details
++    held=quantity(row.quantity) if d['quality']!='Released' else holds(db,row.business_id,row.warehouse_id,row.sku)
++    return {'sku':row.sku,'name':row.name,'unit':row.unit,
++        'quantity':row.quantity,'held':str(held),'data':d}
++
++
++class Command(BaseModel):
++    model_config=ConfigDict(extra='forbid')
++    reference: str=Field(min_length=1,max_length=160,pattern=r'^[A-Za-z0-9:_-]+$')
++    batch: str=Field(min_length=1,max_length=160,pattern=r'^[A-Za-z0-9:_-]+$')
++    warehouse_id: int=Field(gt=0)
++    action: Literal['receive_lots','reserve_materials','release_materials','produce','return_material','quality_release','quality_reject','recall','dispose_output','dispatch_batch','set_lot_quality','adjust_lot']
++    data: dict
++
++
++def normalize_lines(lines):
++    if not isinstance(lines,list) or not 1<=len(lines)<=200:raise HTTPException(422,'Provide 1–200 lot lines')
++    totals={}
++    for line in lines:
++        if not isinstance(line,dict) or not isinstance(line.get('lot'),str) or not 1<=len(line['lot'])<=200:raise HTTPException(422,'Invalid lot reference')
++        if not isinstance(line.get('unit'),str) or not 1<=len(line['unit'])<=100:raise HTTPException(422,'A lot unit of at most 100 characters is required')
++        key='lot:'+line['lot'];q=quantity(line.get('quantity'),True)
++        totals[key]=totals.get(key,Decimal(0))+q
++    return totals
++
++
++@router.get('')
++def listing(warehouse_id:int=Query(gt=0),skip:int=Query(0,ge=0),limit:int=Query(200,ge=1,le=200),user:User=Depends(get_current_business),db:Session=Depends(get_db)):
++    rows=db.query(SuiteLot).filter_by(business_id=user.business_id,warehouse_id=warehouse_id).order_by(SuiteLot.id).offset(skip).limit(limit).all()
++    return {'business_id':user.business_id,'warehouse_id':warehouse_id,'balances':[snapshot(db,row) for row in rows]}
++
++
++@router.post('/commands')
++def execute(body:Command,user:User=Depends(get_current_business),db:Session=Depends(get_db)):
++    if len(json.dumps(body.data))>200000:raise HTTPException(422,'Command exceeds the lot ledger limit')
++    lock_stock(db,user.business_id)
++    prior=db.query(SuiteLotCommand).filter_by(business_id=user.business_id,reference=body.reference).first()
++    fingerprint=digest(body.model_dump())
++    if prior:
++        if prior.fingerprint!=fingerprint:fail('Command reference already used or reconciled; it cannot be reused')
++        return prior.result
++    wh=db.query(Warehouse).filter_by(id=body.warehouse_id,business_id=user.business_id,deleted_at=None).first()
++    if not wh:raise HTTPException(404,'Warehouse not found in this business')
++    if body.action in ('quality_release','quality_reject','recall','dispose_output','set_lot_quality','adjust_lot') and user.role not in (UserRole.OWNER,UserRole.MANAGER):
++        raise HTTPException(403,'Manager approval required for quality or stock corrections')
++    run=db.query(SuiteBatch).filter_by(business_id=user.business_id,warehouse_id=body.warehouse_id,reference=body.batch).first()
++    if not run:
++        run=SuiteBatch(business_id=user.business_id,warehouse_id=body.warehouse_id,reference=body.batch,details={});db.add(run);db.flush()
++    state=dict(run.details);d=body.data;a=body.action;before={};touched=set()
++    def read(sku,required=True):
++        if sku not in touched:
++            row=load(db,user.business_id,body.warehouse_id,sku)
++            before[sku]=snapshot(db,row) if row else None;touched.add(sku)
++        row=load(db,user.business_id,body.warehouse_id,sku)
++        if required and not row:fail('Receive the lot first: '+sku)
++        return row
++    def usable(row):
++        if row.details['quality']!='Released' or row.details.get('expiry','0000')<date.today().isoformat():fail('Lot is quarantined or expired')
++    if a=='receive_lots':
++        lines=d.get('lots',[]);normalize_lines(lines)
++        for lot in lines:
++            if lot.get('quality') not in ('Released','Quarantined') or not all(isinstance(lot.get(k),str) and lot[k] for k in ('ingredient','supplier','unit','expiry')):raise HTTPException(422,'Lot identity, quality, units and expiry are required')
++            try:expiry=date.fromisoformat(lot['expiry'])
++            except ValueError:raise HTTPException(422,'Invalid lot expiry')
++            quantity(lot.get('cost'));q=quantity(lot['quantity'],True)
++            if lot['quality']=='Released' and expiry<date.today():fail('Expired lot cannot be released')
++            sku='lot:'+lot['lot'];row=read(sku,False)
++            if row:
++                if row.details!=lot:fail('Lot reference already has different receiving details')
++            else:db.add(SuiteLot(business_id=user.business_id,warehouse_id=body.warehouse_id,sku=sku,name=lot['ingredient'],unit=lot['unit'],quantity=str(q),details=lot));db.flush()
++    elif a=='reserve_materials':
++        if state.get('holds') or state.get('production'):fail('This batch already reserved or consumed inputs')
++        totals=normalize_lines(d.get('usage'));new={}
++        for sku,q in totals.items():
++            row=read(sku);usable(row)
++            if quantity(row.quantity)-holds(db,user.business_id,body.warehouse_id,sku)<q:fail('Insufficient unreserved lot: '+sku)
++            if any(x.get('unit','').casefold()!=row.details['unit'].casefold() for x in d['usage'] if 'lot:'+x['lot']==sku):fail('Lot units must match')
++            new[sku]=str(q)
++        state['holds']=new
++    elif a=='release_materials':
++        if not state.get('holds') or state.get('production'):fail('No unconsumed reservations exist')
++        for sku in state['holds']:read(sku)
++        state.pop('holds')
++    elif a=='produce':
++        if state.get('production'):fail('This batch already consumed stock')
++        totals=normalize_lines(d.get('usage'));output=d.get('output',{})
++        if not isinstance(output,dict) or not isinstance(output.get('data'),dict):raise HTTPException(422,'Finished output metadata is required')
++        units=quantity(output.get('quantity'),True)
++        if not isinstance(output.get('sku'),str) or not output['sku'].startswith('finished:') or len(output['sku'])>240:raise HTTPException(422,'Invalid finished batch reference')
++        if read(output['sku'],False):fail('Finished batch already exists')
++        try:expiry=date.fromisoformat(output['expiry'])
++        except (ValueError,KeyError,TypeError):raise HTTPException(422,'Invalid finished expiry')
++        if expiry<date.today():fail('Finished batch is expired')
++        for sku,q in totals.items():
++            row=read(sku);usable(row);own=quantity(state.get('holds',{}).get(sku,0))
++            if quantity(row.quantity)-holds(db,user.business_id,body.warehouse_id,sku)+own<q:fail('Insufficient available lot: '+sku)
++            lines=[x for x in d['usage'] if 'lot:'+x['lot']==sku]
++            if any(x.get('unit','').casefold()!=row.details['unit'].casefold() or quantity(x.get('waste',0))>quantity(x['quantity']) for x in lines):fail('Invalid units or waste')
++            row.quantity=str(quantity(row.quantity)-q)
++        # Any unused portion of this batch's holds is released atomically.
++        for sku in state.get('holds',{}):read(sku)
++        state.pop('holds',None);state['production']={'inputs':d['usage'],'output':output,'returns':{}}
++        db.add(SuiteLot(business_id=user.business_id,warehouse_id=body.warehouse_id,sku=output['sku'],name=str(output.get('name','Batch output'))[:240],unit='unit',quantity=str(units),details=output['data']));db.flush()
++        if output['data'].get('quality')!='Quarantined' or output['data'].get('expiry')!=output['expiry']:raise HTTPException(422,'Produced output must begin quarantined with its expiry')
++    elif a=='return_material':
++        production=state.get('production')
++        if not production:fail('No production to return')
++        sku='lot:'+str(d.get('lot'));q=quantity(d.get('quantity'),True);row=read(sku)
++        allowed=sum((quantity(x['quantity'])-quantity(x.get('waste',0)) for x in production['inputs'] if 'lot:'+x['lot']==sku),Decimal(0))
++        returns=dict(production['returns']);previous=quantity(returns.get(sku,0))
++        if previous+q>allowed:fail('Return exceeds original non-waste consumption')
++        row.quantity=str(quantity(quantity(row.quantity)+q));returns[sku]=str(previous+q)
++        state['production']={**production,'returns':returns}
++    elif a in ('set_lot_quality','adjust_lot'):
++        sku=str(d.get('sku'));row=read(sku)
++        if not sku.startswith('lot:'):fail('Choose an ingredient lot')
++        if a=='set_lot_quality':
++            if holds(db,user.business_id,body.warehouse_id,sku):fail('Release batch reservations before changing lot quality')
++            quality=d.get('quality')
++            if quality not in ('Released','Quarantined'):raise HTTPException(422,'Invalid lot quality')
++            if quality=='Released' and row.details['expiry']<date.today().isoformat():fail('Expired lot cannot be released')
++            row.details={**row.details,'quality':quality}
++        else:
++            q=quantity(d.get('quantity'))
++            if quantity(d.get('expected_quantity'))!=quantity(row.quantity):fail('Stock changed; refresh before correcting')
++            if q<holds(db,user.business_id,body.warehouse_id,sku):fail('Correction cannot consume reserved stock')
++            row.quantity=str(q)
++    else:
++        production=state.get('production')
++        if not production:fail('Record production first')
++        row=read(production['output']['sku']);quality=row.details['quality'];q=quantity(row.quantity)
++        if a in ('quality_release','quality_reject'):
++            if quality!='Quarantined':fail('Quality decision was already made')
++            if a=='quality_release' and row.details['expiry']<date.today().isoformat():fail('Expired output cannot be released')
++            row.details={**row.details,'quality':'Released' if a=='quality_release' else 'Rejected'}
++        elif a=='recall':row.details={**row.details,'quality':'Recalled'}
++        elif a=='dispose_output':
++            if quality not in ('Rejected','Recalled'):fail('Only rejected or recalled output can be disposed')
++            used=quantity(d.get('quantity'),True)
++            if used>q:fail('Disposal exceeds quarantined output')
++            row.quantity=str(q-used)
++        elif a=='dispatch_batch':
++            usable(row);used=quantity(d.get('quantity'),True)
++            if used>q:fail('Dispatch exceeds released output')
++            row.quantity=str(q-used)
++            state['dispatches']=[*state.get('dispatches',[]),d]
++    run.details=state;db.flush()
++    result={'business_id':user.business_id,'warehouse_id':body.warehouse_id,'reference':body.reference,'batch':body.batch,'action':a,'status':'committed',
++        'before':before,'after':{sku:snapshot(db,load(db,user.business_id,body.warehouse_id,sku)) for sku in sorted(touched)}}
++    db.add(SuiteLotCommand(business_id=user.business_id,reference=body.reference,fingerprint=fingerprint,result=result));db.commit()
++    return result
++
++
++@router.post('/commands/{reference}/reconcile')
++def reconcile(reference:str,user:User=Depends(get_current_business),db:Session=Depends(get_db)):
++    if len(reference)>160 or not __import__('re').fullmatch(r'[A-Za-z0-9:_-]+',reference):raise HTTPException(422,'Invalid command reference')
++    lock_stock(db,user.business_id)
++    row=db.query(SuiteLotCommand).filter_by(business_id=user.business_id,reference=reference).first()
++    if not row:
++        row=SuiteLotCommand(business_id=user.business_id,reference=reference,fingerprint='missing',result={'business_id':user.business_id,'reference':reference,'status':'missing'})
++        db.add(row);db.commit()
++    return row.result
+diff --git a/backend/app/routers/warehouses.py b/backend/app/routers/warehouses.py
+index 0228128..81bf2db 100644
+--- a/backend/app/routers/warehouses.py
++++ b/backend/app/routers/warehouses.py
+@@ -54,5 +54,14 @@ def delete_warehouse(
+     ).first()
+     if not wh:
+         raise HTTPException(status_code=404, detail="Warehouse not found")
++    from app.services.reservations import lock_stock, held
++    from app.models.suite_lot import SuiteLot
++    from app.models.stock_level import StockLevel
++    from decimal import Decimal
++    lock_stock(db,user.business_id)
++    if any(Decimal(row.quantity)>0 for row in db.query(SuiteLot).filter_by(business_id=user.business_id,warehouse_id=warehouse_id)):
++        raise HTTPException(409,'Reconcile or dispose of lot balances before removing the warehouse')
++    if any(row.quantity>0 or held(db,user.business_id,row.product_id,warehouse_id)>0 for row in db.query(StockLevel).filter_by(business_id=user.business_id,warehouse_id=warehouse_id)):
++        raise HTTPException(409,'Reconcile stock and reservations before removing the warehouse')
+     wh.soft_delete()
+     db.commit()
+diff --git a/backend/scripts/migrate_suite.py b/backend/scripts/migrate_suite.py
+index 34fd427..79f55d1 100644
+--- a/backend/scripts/migrate_suite.py
++++ b/backend/scripts/migrate_suite.py
+@@ -11,21 +11,25 @@ from app.models.suite_reservation import SuiteReservation
+ 
+ 
+ def migrate(target):
+-    table=SuiteReservation.__table__
++    from app.models.suite_lot import SuiteLot, SuiteBatch, SuiteLotCommand
++    tables=[SuiteReservation.__table__,SuiteLot.__table__,SuiteBatch.__table__,SuiteLotCommand.__table__]
++    created=[]
+     with target.begin() as connection:
+         inspector=inspect(connection)
+-        if not all(inspector.has_table(name) for name in ('businesses', 'stock_levels')):
++        if not all(inspector.has_table(name) for name in ('businesses','stock_levels','warehouses')):
+             raise ValueError('Initialize the existing Inventory schema first')
+-        existed=inspector.has_table(table.name)
+-        table.create(connection,checkfirst=True)
+-        inspector=inspect(connection)
+-        columns={value['name']:value for value in inspector.get_columns(table.name)}
+-        if set(columns)!={column.name for column in table.columns}:
+-            raise ValueError('Existing Suite authority table is incompatible')
+-        unique={tuple(value['column_names']) for value in inspector.get_unique_constraints(table.name)}
+-        if ('business_id','reference') not in unique:
+-            raise ValueError('Business/reference uniqueness is missing')
+-    return {'migration':table.name+'-v1','created':not existed,'verified':True}
++        for table in tables:
++            if not inspector.has_table(table.name):created.append(table.name)
++            table.create(connection,checkfirst=True)
++            current=inspect(connection)
++            columns={value['name'] for value in current.get_columns(table.name)}
++            if columns!={column.name for column in table.columns}:
++                raise ValueError('Existing Suite authority table is incompatible: '+table.name)
++            unique={tuple(value['column_names']) for value in current.get_unique_constraints(table.name)}
++            expected={tuple(c.name for c in constraint.columns) for constraint in table.constraints if constraint.__class__.__name__=='UniqueConstraint'}
++            if not expected.issubset(unique):raise ValueError('Authority uniqueness is missing: '+table.name)
++    return {'migration':'suite-authorities-v2','created':bool(created),'created_tables':created,'verified':True}
++
+ 
+ 
+ if __name__=='__main__':
+diff --git a/backend/tests/test_suite_lots.py b/backend/tests/test_suite_lots.py
+new file mode 100644
+index 0000000..5efd839
+--- /dev/null
++++ b/backend/tests/test_suite_lots.py
+@@ -0,0 +1,109 @@
++from datetime import date,timedelta
++from app.models.user import User,UserRole
++
++
++def fixture(c):
++    warehouse=c.post('/warehouses',json={'name':'Lots'}).json()['id']
++    lot={'lot':'L1','ingredient':'Tea','supplier':'Supplier','unit':'kg','quantity':'10.125','cost':'2.50','expiry':(date.today()+timedelta(days=365)).isoformat(),'quality':'Released','file_id':'evidence'}
++    counter=[0]
++    def command(action,data,*,batch='B1',status=200,reference=None):
++        counter[0]+=1
++        body={'reference':reference or 'command-'+str(counter[0]),'batch':batch,'warehouse_id':warehouse,'action':action,'data':data}
++        response=c.post('/suite/lots/commands',json=body)
++        assert response.status_code==status,response.text
++        return response.json()
++    command('receive_lots',{'lots':[lot]},reference='receipt')
++    return warehouse,lot,command
++
++
++def test_decimal_reserve_produce_return_release_dispatch_recall_and_retry(auth_client):
++    c=auth_client;w,lot,cmd=fixture(c)
++    usage=[{'lot':'L1','quantity':'2.125','waste':'.125','unit':'kg'}]
++    receipt=cmd('reserve_materials',{'usage':usage},reference='reserve')
++    assert receipt['after']['lot:L1']['held']=='2.125'
++    assert cmd('reserve_materials',{'usage':usage},reference='reserve')==receipt
++    cmd('reserve_materials',{'usage':[{**usage[0],'quantity':'9'}]},batch='B2',status=409)
++    output={'sku':'finished:B1','quantity':'8','expiry':lot['expiry'],'data':{'quality':'Quarantined','expiry':lot['expiry'],'record_id':'test'}}
++    result=cmd('produce',{'usage':usage,'output':output},reference='produce')
++    assert result['after']['lot:L1']['quantity']=='8.000' and result['after']['lot:L1']['held']=='0'
++    assert result['after']['finished:B1']['held']=='8'
++    cmd('dispatch_batch',{'quantity':1},status=409)
++    cmd('return_material',{'lot':'L1','quantity':'.5'})
++    cmd('return_material',{'lot':'L1','quantity':'2'},status=409)
++    cmd('quality_release',{})
++    result=cmd('dispatch_batch',{'quantity':3,'reference':'customer-order'},reference='dispatch')
++    assert result['after']['finished:B1']['quantity']=='5'
++    assert cmd('dispatch_batch',{'quantity':3,'reference':'customer-order'},reference='dispatch')==result
++    cmd('recall',{})
++    cmd('dispatch_batch',{'quantity':1},status=409)
++    assert cmd('dispose_output',{'quantity':5})['after']['finished:B1']['quantity']=='0'
++
++
++def test_lot_quality_corrections_and_missing_receipt_fence(auth_client):
++    c=auth_client;w,lot,cmd=fixture(c)
++    cmd('set_lot_quality',{'sku':'lot:L1','quality':'Quarantined'})
++    cmd('reserve_materials',{'usage':[{'lot':'L1','quantity':1,'unit':'kg'}]},status=409)
++    result=cmd('adjust_lot',{'sku':'lot:L1','expected_quantity':'10.125','quantity':'8.5'})
++    assert result['after']['lot:L1']['held']=='8.5'
++    cmd('set_lot_quality',{'sku':'lot:L1','quality':'Released'})
++    cmd('reserve_materials',{'usage':[{'lot':'L1','quantity':2,'unit':'kg'}]})
++    cmd('adjust_lot',{'sku':'lot:L1','expected_quantity':'8.5','quantity':1},status=409)
++    cmd('set_lot_quality',{'sku':'lot:L1','quality':'Quarantined'},status=409)
++    cmd('release_materials',{})
++    assert c.post('/suite/lots/commands/late/reconcile').json()['status']=='missing'
++    cmd('reserve_materials',{'usage':[{'lot':'L1','quantity':1,'unit':'kg'}]},reference='late',status=409)
++
++
++def test_lot_business_and_manager_boundaries(auth_client,db_session):
++    c=auth_client;w,lot,cmd=fixture(c)
++    user=db_session.query(User).one();user.role=UserRole.STAFF;db_session.commit()
++    cmd('adjust_lot',{'sku':'lot:L1','expected_quantity':'10.125','quantity':1},status=403)
++    c.headers['X-DoAide-Business-ID']='999'
++    assert c.get('/suite/lots',params={'warehouse_id':w}).status_code==403
++    del c.headers['X-DoAide-Business-ID']
++    token=c.post('/auth/register',json={'email':'other@example.com','password':'OtherPass123!','business_name':'Other','full_name':'Other'}).json()['access_token']
++    c.headers['Authorization']='Bearer '+token
++    assert c.get('/suite/lots',params={'warehouse_id':w}).json()['balances']==[]
++    cmd('receive_lots',{'lots':[lot]},status=404)
++
++
++def test_malformed_output_and_precision_are_rejected(auth_client):
++    c=auth_client;w,lot,cmd=fixture(c)
++    cmd('produce',{'usage':[{'lot':'L1','quantity':1}], 'output':{}},status=422)
++    cmd('adjust_lot',{'sku':'lot:L1','expected_quantity':'10.125','quantity':'1.0000001'},status=422)
++    cmd('receive_lots',{'lots':[{**lot,'lot':'bad','quantity':'NaN'}]},status=422)
++
++
++def test_warehouse_with_lots_cannot_be_deleted(auth_client):
++    w,lot,cmd=fixture(auth_client)
++    assert auth_client.delete('/warehouses/'+str(w)).status_code==409
++
++
++def test_concurrent_batches_cannot_reserve_the_same_decimal_stock(tmp_path):
++    from concurrent.futures import ThreadPoolExecutor
++    from threading import Barrier
++    from types import SimpleNamespace
++    from sqlalchemy import create_engine
++    from sqlalchemy.orm import Session
++    from fastapi import HTTPException
++    from app.core.database import Base
++    from app.models.business import Business
++    from app.models.warehouse import Warehouse
++    from app.models.suite_lot import SuiteLot,SuiteBatch
++    from app.routers.suite_lots import execute,Command
++    engine=create_engine('sqlite:///'+str(tmp_path/'lot-race.db'),connect_args={'check_same_thread':False,'timeout':10})
++    Base.metadata.create_all(engine)
++    with Session(engine) as db:
++        business=Business(name='Race');db.add(business);db.flush()
++        warehouse=Warehouse(name='Main',business_id=business.id);db.add(warehouse);db.flush()
++        db.add(SuiteLot(business_id=business.id,warehouse_id=warehouse.id,sku='lot:ONE',name='Flour',unit='kg',quantity='1.125',details={'quality':'Released','expiry':(date.today()+timedelta(days=10)).isoformat(),'unit':'kg'}))
++        ids=(business.id,warehouse.id);db.commit()
++    barrier=Barrier(2)
++    def run(index):
++        with Session(engine) as db:
++            body=Command(reference='R'+str(index),batch='B'+str(index),warehouse_id=ids[1],action='reserve_materials',data={'usage':[{'lot':'ONE','quantity':'.75','unit':'kg'}]})
++            barrier.wait()
++            try:execute(body,SimpleNamespace(business_id=ids[0],role=UserRole.OWNER),db);return 200
++            except HTTPException as exc:db.rollback();return exc.status_code
++    with ThreadPoolExecutor(2) as pool:assert sorted(pool.map(run,[1,2]))==[200,409]
++    with Session(engine) as db:assert db.query(SuiteBatch).count()==1
+diff --git a/frontend/src/pages/StockPage.jsx b/frontend/src/pages/StockPage.jsx
+index 01b2fa5..b443aaf 100644
+--- a/frontend/src/pages/StockPage.jsx
++++ b/frontend/src/pages/StockPage.jsx
+@@ -3,12 +3,44 @@ import { api } from "../lib/api";
+ 
+ export default function StockPage() {
+   const [stock, setStock] = useState([]);
++  const [warehouses, setWarehouses] = useState([]);
++  const [warehouse, setWarehouse] = useState("");
++  const [lots, setLots] = useState([]);
++  const [lotError, setLotError] = useState("");
++  useEffect(() => { api.get("/warehouses").then(({data}) => setWarehouses(data || [])); }, []);
++  useEffect(() => {
++    let live = true; setLots([]); setLotError("");
++    if (!warehouse) return;
++    (async () => {
++      const rows = [];
++      for (let skip=0; skip<10000; skip+=200) {
++        const {data,error} = await api.get(`/suite/lots?warehouse_id=${warehouse}&skip=${skip}&limit=200`);
++        if (error || !Array.isArray(data?.balances)) throw new Error("Unable to load lot balances");
++        rows.push(...data.balances);
++        if (data.balances.length<200) { if(live) setLots(rows); return; }
++      }
++      throw new Error("Too many lots; export through the API");
++    })().catch(error => { if(live) setLotError(error.message); });
++    return () => { live=false; };
++  }, [warehouse]);
+ 
+   useEffect(() => { api.get("/stock").then(({ data }) => data && setStock(data)); }, []);
+ 
+   return (
+     <div>
+       <h1 className="text-2xl font-bold mb-6" style={{ color: "var(--text-primary)" }}>Stock Levels</h1>
++      <section className="mb-8" aria-label="Batch lot ledger">
++        <h2 className="text-xl font-semibold mb-2">Batch lots</h2>
++        <label>Warehouse <select value={warehouse} onChange={e=>setWarehouse(e.target.value)} className="p-2 rounded border">
++          <option value="">Select a warehouse</option>
++          {warehouses.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
++        </select></label>
++        {lotError && <p role="alert">{lotError}</p>}
++        {warehouse && <div className="overflow-x-auto mt-3"><table className="w-full text-sm">
++          <thead><tr>{["Lot", "Ingredient / output", "Unit", "On hand", "Held", "Quality", "Expiry"].map(x=><th key={x} className="text-left p-2">{x}</th>)}</tr></thead>
++          <tbody>{lots.map(l=><tr key={l.sku}>{[l.sku,l.name,l.unit,l.quantity,l.held,l.data.quality,l.data.expiry].map((x,i)=><td key={i} className="p-2">{x}</td>)}</tr>)}</tbody>
++        </table>{!lotError && lots.length===0 && <p>No lot balances found.</p>}</div>}
++      </section>
+       <div className="overflow-x-auto rounded-xl" style={{ border: "1px solid var(--card-border)" }}>
+         <table className="w-full text-sm">
+           <thead><tr style={{ background: "var(--bg-tertiary)" }}>
+-- 
+2.50.1 (Apple Git-155)
+

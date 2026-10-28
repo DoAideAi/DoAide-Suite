@@ -53,7 +53,7 @@ def create_app(db_path=None):
         install_private_access_logging()
         yield
 
-    app = FastAPI(title="DoAide Suite", version="0.5.0", lifespan=lifespan)
+    app = FastAPI(title="DoAide Suite", version="0.6.0", lifespan=lifespan)
     from .security import RequestBoundary
     app.add_middleware(RequestBoundary,path=db_path)
 
@@ -283,6 +283,7 @@ def create_app(db_path=None):
             if body.status=='archived':
                 from .operations import get_state,items
                 state=get_state(db,record_id)
+                if any(x.get('status') in ('pending','reserved') for x in state['data'].get('parts_receipts',{}).values()):raise HTTPException(409,'Consume or release Inventory parts before archiving')
                 if state['data'].get('authority_pending') or any(i['data'].get('_scheduler_reference') and i['data'].get('_status') not in ('completed','verified','booking-cancelled','booking-no_show','booking-missing') for i in items(db,record_id,'visit')):
                     raise HTTPException(409,'Resolve connected stock commands and close Scheduler appointments before archiving')
                 operational=db.execute('SELECT stage FROM operations WHERE record_id=?',(record_id,)).fetchone()

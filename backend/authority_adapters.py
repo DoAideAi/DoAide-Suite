@@ -67,6 +67,8 @@ def supersede_failed(db, job_id):
 
 
 def before_resource(db, r, u, kind, existing):
+    if r['product']=='batch' and kind=='dispatch' and authority(db,'INVENTORY_LOTS',u['workspace_id']):
+        raise HTTPException(409,'Use Dispatch batch through Inventory so stock commits in the owning service')
     if r['product'] == 'orderdesk' and authority(db, 'INVENTORY', u['workspace_id']):
         op.require(kind != 'catalogue', 'Inventory owns this catalogue; refresh it from Inventory')
     if existing and existing['data'].get('_scheduler_reference'):

@@ -1,6 +1,6 @@
 [project]
 name = "doaide-suite"
-version = "0.5.0"
+version = "0.6.0"
 description = "Operational workspaces for twelve DoAide products"
 requires-python = ">=3.12"
 dependencies = [

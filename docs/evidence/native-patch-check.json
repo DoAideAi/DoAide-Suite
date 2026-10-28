@@ -1,0 +1,16 @@
+[
+  {
+    "service": "inventory",
+    "base": "2302fde10e218715ee880db6bf306a3191ac5e85",
+    "head": "46ffc65eba293acab0fedb1a4023fb4ce90af27c",
+    "patches": 3,
+    "verified_files": 18
+  },
+  {
+    "service": "khata",
+    "base": "451333fdedb1350a45523492def4572d4e31a30d",
+    "head": "1b919cd080639d290de3649f620d48f4d2c26ad9",
+    "patches": 1,
+    "verified_files": 2
+  }
+]

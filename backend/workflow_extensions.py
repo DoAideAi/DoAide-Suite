@@ -74,6 +74,8 @@ def validate_resource(db, record, user, kind, data, item_id):
 
 
 def before_action(db,r,u,a,d,s):
+    if s['data'].get('authority_pending'):
+        op.require(a in ('inventory_status','reconcile_lots','reconcile_parts','refresh_lots','inventory_refresh'),'Resolve the pending authority command first')
     if r['product']=='amc' and a in ('start_visit','complete_visit'):
         from .authority_adapters import require_current_booking
         require_current_booking(op.one_item(db,r['id'],d['item_id'],'visit')['data'])

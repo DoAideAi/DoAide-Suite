@@ -11,6 +11,36 @@ def extend(specs, resource, action, text, day, email, ref, file, review):
         specs[product]['resources'].update(values)
     def optional(field): return {**field, 'required': False}
     reason = text('reason', 'Reason and source')
+    for slug in ('orderdesk','claimpack','handover','scope','collect','sop','fees'):
+        resources(slug,{'source_import':{**resource('Imported source previews',[]),'readonly':True}})
+    for slug in ('orderdesk','claimpack'):
+        actions(slug,{'import_desk_conversation':action('Preview Desk conversation',[F('source_id','Conversation UUID')],review),
+                      'import_desk_order':action('Preview Desk order',[F('source_id','Order UUID')],review)})
+    for slug in ('orderdesk','claimpack','handover','scope'):
+        actions(slug,{'apply_source':action('Apply reviewed source',[ref('import_id','Imported preview','source_import'),reason],review)})
+    actions('handover',{'import_realty_property':action('Preview Realty property',[I('source_id','Property ID',min=1)],review)})
+    resources('handover',{'property_reference':resource('Reviewed Realty property',[F('reference','Property reference'),F('title','Property title'),F('location','Location'),text('details','Property details'),file()],singleton=True)})
+    actions('scope',{'import_proposal_template':action('Preview Proposals offer template',[I('source_id','Template ID',min=1)],review)})
+    resources('scope',{'offer_template':resource('Reviewed offer template',[F('reference','Template reference'),F('name','Template name'),text('terms','Offer terms'),text('sections','Offer sections'),text('pricing','Reference pricing'),file()],singleton=True)})
+    actions('collect',{'import_khata_customer':action('Preview Khata customer ledger',[F('source_id','Khata customer ID')],review),
+        'reconcile_khata_payment':action('Reconcile a received Khata payment',[ref('import_id','Imported preview','source_import'),F('transaction_id','Transaction ID from preview'),F('customer_confirmation','Confirm collection customer name'),reason],review)})
+    actions('sop',{'import_payroll_roster':action('Preview Payroll staff roster',[],review),
+        'assign_payroll_staff':action('Assign reviewed Payroll staff',[ref('import_id','Imported preview','source_import'),R('employees','Selected employees',[I('employee_id','Payroll employee ID',min=1)]),day('due','Training due date')],review)})
+    actions('fees',{'preview_enrollment_csv':action('Preview course enrollment CSV',[file()],review),
+        'apply_enrollment':action('Apply reviewed course enrollment',[ref('import_id','Imported preview','source_import'),F('student_reference','Student reference from CSV'),F('course_reference','Course reference from CSV'),F('student_confirmation','Confirm fee record student name / reference')],review)})
+    actions('batch',{
+        'connect_lot_inventory':action('Activate Inventory lot ledger',[],['owner']),
+        'refresh_lots':action('Refresh Inventory lots'),
+        'reconcile_lots':action('Reconcile pending Inventory lot command',[],review),
+        'dispatch_batch':action('Dispatch batch through Inventory',[F('customer','Customer'),F('reference','Dispatch reference'),I('quantity','Units',min=1)]),
+        'set_lot_quality':action('Review ingredient lot quality',[F('sku','Lot SKU · lot:reference'),S('quality','Quality',['Released','Quarantined']),reason,file()],review),
+        'adjust_lot':action('Correct Inventory ingredient lot count',[F('sku','Lot SKU · lot:reference'),N('expected_quantity','Reviewed on-hand quantity'),N('quantity','Corrected on-hand quantity'),F('reference','Correction reference'),reason,file()],review)})
+    fields('amc','part',[F('sku','Inventory catalogue SKU',required=False)])
+    actions('amc',{'inventory_refresh':action('Activate / refresh Inventory parts catalogue',[],review),
+        'reserve_parts':action('Reserve visit parts in Inventory',[ref('item_id','Visit','visit')]),
+        'consume_parts':action('Confirm used parts in Inventory',[ref('item_id','Visit','visit')]),
+        'release_parts':action('Release unused parts reservation',[ref('item_id','Visit','visit')]),
+        'reconcile_parts':action('Reconcile parts reservation',[ref('item_id','Visit','visit')],review)})
     fields('amc','visit',[I('meeting_type_id','Scheduler meeting type ID',min=1,required=False),email('customer_email','Customer email for Scheduler',required=False)])
     actions('amc',{
         'connect_scheduler':action('Activate connected Scheduler for new visits',[],['owner']),

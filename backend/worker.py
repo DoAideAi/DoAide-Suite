@@ -43,7 +43,13 @@ def claim(path=None):
 
 def deliver(job,path=None,transport=None):
     data=job['data'];kind=job['kind']
-    if kind in ('inventory-command','scheduler-command'):
+    if kind=='source-import':
+        from .source_imports import fetch
+        return fetch(job,path,transport)
+    if kind=='inventory-lots':
+        from .lot_inventory import deliver as lot_deliver
+        return lot_deliver(job,path,transport)
+    if kind in ('inventory-command','scheduler-command','inventory-parts'):
         from .authority_adapters import deliver as authority_deliver
         return authority_deliver(job,path,transport)
     if kind=='contracts-import':
@@ -155,8 +161,11 @@ def run_once(path=None,transport=None):
         db.execute('BEGIN IMMEDIATE')
         applied=db.execute("UPDATE jobs SET state=?,data=?,due_at=?,lease_until=NULL,last_error=?,updated_at=? WHERE id=? AND state='running' AND attempts=?",(state,dump({**job['data'],'result':result}),due,error,now(),job['id'],job['attempts'])).rowcount
         if not applied:return {'id':job['id'],'state':'superseded','error':'Worker lease no longer owns this job'}
-        if state=='delivered' and job['kind'] in ('inventory-command','scheduler-command'):
-            from .authority_adapters import complete
+        if state=='delivered' and job['kind'] in ('inventory-command','scheduler-command','inventory-lots','inventory-parts','source-import'):
+            if job['kind']=='source-import':from .source_imports import complete
+            elif job['kind']=='inventory-lots':from .lot_inventory import complete
+            elif job['kind']=='inventory-parts':from .parts_inventory import complete
+            else:from .authority_adapters import complete
             db.execute('SAVEPOINT authority_result')
             try:
                 complete(db,job,result)

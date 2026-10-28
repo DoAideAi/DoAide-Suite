@@ -1,5 +1,5 @@
 {
-  "version": "0.5.0",
+  "version": "0.6.0",
   "schema": 5,
   "readiness": {
     "ready": true
@@ -13,6 +13,6 @@
     "files": 0,
     "portfolio_authorities": 0
   },
-  "backup": "var/backups/doaide-v05-cutover-20261028.db",
+  "backup": "var/backups/doaide-v06-cutover-20261028.db",
   "external_connections_activated": false
 }

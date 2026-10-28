@@ -1,11 +1,11 @@
 # DoAide Suite product index
 
-Updated: 28 October 2026 · version 0.5.0
+Updated: 28 October 2026 · version 0.6.0
 
 Repository: [DoAideAi/DoAide-Suite](https://github.com/DoAideAi/DoAide-Suite), private, published using `r2st`.
 Local checkout: `/Users/dev/projects/doaide/DoAide-Suite`.
 
-All twelve products run in this shared FastAPI/React/SQLite application. **Status: expanded local implementation; full original-scope/production acceptance open.** v0.5 adds authoritative Inventory order-stock and Scheduler booking commands, with real service patches and isolated cross-service acceptance. Live provider acceptance and additional native portfolio adapters remain explicit work.
+All twelve products run in this shared FastAPI/React/SQLite application. **Status: expanded local implementation; full original-scope/production acceptance open.** v0.6 completes the outstanding portfolio adapter code: Batch lots, AMC parts and reviewed Desk, Realty, Khata, Proposals, Payroll and course-enrollment imports. Live provider and production acceptance remain explicit work.
 
 | Product | Implemented workflows | Detailed scope |
 | --- | --- | --- |
@@ -24,13 +24,13 @@ All twelve products run in this shared FastAPI/React/SQLite application. **Statu
 
 Shared controls include roles/recovery, private evidence, frozen documents, financial/stock ledgers, durable jobs, reports, plans/billing, academic access, request limits, encrypted backups and isolated workspace-data erasure. External delivery is disabled by default.
 
-- [Implementation and evidence](docs/BUILD_STATUS.md): 166 suite tests, 29 Inventory tests and 42 Scheduler tests; 95 retained Invoicer checks; frontend build/audit, container, PDF and backup/restore checks.
-- [Remaining integrations and release acceptance](docs/REMAINING_SCOPE.md): provider accounts, remaining portfolio adapters, current browser/accessibility testing, pilot validation and production operations.
+- [Implementation and evidence](docs/BUILD_STATUS.md): 179 suite tests, 35 Inventory tests and 42 Scheduler tests, 41 Khata tests; 95 retained Invoicer checks; frontend build/audit, container, PDF and backup/restore checks.
+- [Remaining integrations and release acceptance](docs/REMAINING_SCOPE.md): provider accounts, current browser/accessibility testing, pilot validation and production operations.
 - [Connection setup](docs/INTEGRATIONS.md), [Invoicer source patch](integrations/invoicer/README.md), [scope of work](docs/SCOPE_OF_WORK.md) and [runbook](docs/OPERATIONS.md).
 - [Deployment strategy](STRATEGY.md): build off-server and release immutable images after acceptance.
 
-Current browser acceptance remains unverified because the browser tool rejected the local URL. Historical screenshots are not v0.5 acceptance. Credentials, application data, backups and dependencies are excluded from Git.
+Current browser acceptance remains unverified because the browser tool rejected the local URL. Historical screenshots are not v0.6 acceptance. Credentials, application data, backups and dependencies are excluded from Git.
 
 The broader portfolio index is `/Users/dev/projects/doaide/PRODUCT_INDEX.md`; existing products retain separate repositories and release status.
 
-Authority configuration and boundaries: [Inventory and Scheduler](docs/AUTHORITATIVE_CONNECTIONS.md). Batch lot/quality balances, parts consumption, remaining portfolio adapters and deployed-account acceptance remain open.
+Authority configuration and boundaries: [Inventory and Scheduler](docs/AUTHORITATIVE_CONNECTIONS.md). Batch lot/quality balances and AMC parts now commit in Inventory. [Reviewed source imports](docs/PORTFOLIO_IMPORTS.md) cover the remaining portfolio dependencies. Deployed-account acceptance remains open.

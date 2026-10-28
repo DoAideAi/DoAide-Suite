@@ -1,0 +1,9 @@
+{
+  "isolated_databases": 4,
+  "real_http_services": 3,
+  "proposals_template": "passed",
+  "payroll_roster": "passed",
+  "khata_customer_ledger": "passed",
+  "private_payroll_fields_retained": false,
+  "external_provider_requests": 0
+}

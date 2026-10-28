@@ -104,17 +104,20 @@ def validate_refs(db, record, fields, data):
             data[f['key']]=val.lower()
 
 
-def resource(db, record, user, kind, raw, item_id=None, delete=False):
+def resource(db, record, user, kind, raw, item_id=None, delete=False, internal_authority=False):
     permit(user,'owner','operator','reviewer')
     spec = SPECS[record['product']]['resources'].get(kind)
     require(spec is not None, 'Unknown resource type')
+    require(not spec.get('readonly'),'Imported source previews are immutable; use a new import')
     state = get_state(db,record['id'])
     slug = record['product']
     if slug=='renew' and kind=='reminder_policy':permit(user,'owner','reviewer')
     if record['status']=='archived': raise HTTPException(409,'Restore the record before editing')
     existing = one_item(db,record['id'],item_id,kind) if item_id else None
+    from .parts_inventory import guard_resource
+    guard_resource(db,record,user,kind,existing,raw or {})
     from .authority_adapters import before_resource, visit_created
-    before_resource(db,record,user,kind,existing)
+    if not internal_authority:before_resource(db,record,user,kind,existing)
     require(not state['data'].get('authority_pending'),'Resolve the pending authority job before editing')
     if existing and existing['data'].get('_outcome'):raise HTTPException(409,'Resolved cases are immutable; open a new case')
     if state['data'].get('withdrawal'):raise HTTPException(409,'Enrollment was withdrawn; use an explicit financial correction')
@@ -289,7 +292,11 @@ def snapshot(db,record,user,kind,state,extra=None):
           'files':[dict(r) for r in db.execute('SELECT id,name,mime,size,checksum,extraction_status FROM files WHERE record_id=? ORDER BY created_at',(record['id'],))], 'extra':extra or {}}
     # Quiz answer keys and internal delivery policies never enter a customer-facing document.
     if record['product']=='sop':
+        roster_files={i['data']['file_id'] for i in body['items'] if i['kind']=='source_import' and i['data'].get('service')=='PAYROLL'}
+        body['files']=[f for f in body['files'] if f['id'] not in roster_files]
+        body['items']=[i for i in body['items'] if i['kind']!='source_import']
         body['items']=[{**i,'data':{k:v for k,v in i['data'].items() if k!='answer'}} for i in body['items'] if i['kind']!='assignment']
+    body['items']=[i for i in body['items'] if i['kind']!='source_import']
     if record['product']=='claimpack':
         redactions=[]
         for i in body['items']:
@@ -401,7 +408,13 @@ def execute(db,record,user,action,raw):
     from .workflow_extensions import execute as extended_execute, before_action, after_action
     before_action(db,record,user,action,data,s)
     from .authority_adapters import execute as authority_execute
-    if authority_execute(db,record,user,action,data,s,result):pass
+    from .lot_inventory import execute as lot_execute
+    from .parts_inventory import execute as parts_execute
+    from .source_imports import execute as source_execute
+    if source_execute(db,record,user,action,data,s,result):pass
+    elif parts_execute(db,record,user,action,data,s,result):pass
+    elif lot_execute(db,record,user,action,data,s,result):pass
+    elif authority_execute(db,record,user,action,data,s,result):pass
     elif extended_execute(db,record,user,action,data,s,result):pass
     elif action=='ledger':
         result['entry_id']=post_ledger(db,record,user,data)
@@ -451,6 +464,8 @@ def execute(db,record,user,action,raw):
             visit=one_item(db,record['id'],data['item_id'],'visit');require(visit['data'].get('_status')=='verified','Independently verify service before billing')
             require(visit['id'] not in s['data'].get('billed_visits',{}),'This visit already has an invoice handoff')
             parts=[i['data'] for i in items(db,record['id'],'part') if i['data']['visit_id']==visit['id']]
+            from .authority_adapters import authority
+            if parts and authority(db,'INVENTORY',user['workspace_id']):require(s['data'].get('parts_receipts',{}).get(visit['id'],{}).get('status')=='dispatched','Confirm Inventory parts consumption before billing')
             total=cents(data['service_charge'])+sum(cents(i['cost']) for i in parts)
             result['document_id']=snapshot(db,record,user,'draft-invoice',s,{'visit_id':visit['id'],'total_paise':total,'reason':data['reason']})
             result['job_id']=enqueue(db,record,user,'invoice',{'document_id':result['document_id']},'amc-invoice:'+visit['id'])
@@ -705,11 +720,17 @@ def batch_action(db,record,user,action,data,s,result):
             if prior:
                 require(json.loads(prior['data'])==d,'Lot reference is already used with different receiving details')
                 continue
-            require(d['quality']=='Released','Quarantined supplier lots cannot enter available stock')
-            require(d['expiry']>=business_today(db,user).isoformat(),'Cannot receive an expired ingredient lot')
-            db.execute('INSERT INTO stock VALUES (?,?,?,?,?,?,?,?)',(user['workspace_id'],sku,d['ingredient'],d['unit'],d['quantity'],'0',dump(d),now()))
+            require(d['quality']=='Quarantined' or d['expiry']>=business_today(db,user).isoformat(),'Cannot release an expired ingredient lot')
+            db.execute('INSERT INTO stock VALUES (?,?,?,?,?,?,?,?)',(user['workspace_id'],sku,d['ingredient'],d['unit'],d['quantity'],d['quantity'] if d['quality']=='Quarantined' else '0',dump(d),now()))
             movement(db,record,user,sku,d['quantity'],'receive','receive:'+d['lot'])
         s['stage']='materials-ready'
+    elif action=='set_lot_quality':
+        row=stock_row(db,user,data['sku']);require(row and data['sku'].startswith('lot:'),'Choose an ingredient lot')
+        metadata=json.loads(row['data'])
+        require(metadata['quality']!='Released' or decimal(row['held'])==0,'Release reservations before changing lot quality')
+        require(data['quality']!='Released' or metadata['expiry']>=business_today(db,user).isoformat(),'Expired lot cannot be released')
+        metadata['quality']=data['quality'];held='0' if data['quality']=='Released' else row['quantity']
+        db.execute('UPDATE stock SET data=?,held=?,updated_at=? WHERE workspace_id=? AND sku=?',(dump(metadata),held,now(),user['workspace_id'],data['sku']))
     elif action=='reserve_materials':
         require(not s['data'].get('production') and not s['data'].get('material_reservations'),'Inputs are already reserved or consumed')
         usage=items(db,record['id'],'usage');require(usage,'Record planned lot quantities before reserving')
@@ -766,6 +787,10 @@ def batch_action(db,record,user,action,data,s,result):
         sku='finished:'+p['batch_number'];require(not stock_row(db,user,sku),'Finished batch number already exists')
         db.execute('INSERT INTO stock VALUES (?,?,?,?,?,?,?,?)',(user['workspace_id'],sku,p['product'],'unit',p['produced_units'],p['produced_units'],dump({'quality':'Quarantined','record_id':record['id'],'expiry':p['expiry']}),now()))
         s['data']['production']={'inputs':consumed,'recipe_version':next(iter(versions)),'variance':variance,'total_paise':total,'unit_cost_paise':int((Decimal(total)/int(p['produced_units'])).quantize(Decimal(1))),'produced_by':user['id'],'at':now()};s['stage']='produced'
+        for reserved_sku,remaining in s['data'].get('material_reservations',{}).items():
+            if decimal(remaining)>0:
+                balance=stock_row(db,user,reserved_sku)
+                db.execute('UPDATE stock SET held=? WHERE workspace_id=? AND sku=?',(str(decimal(balance['held'])-decimal(remaining)),user['workspace_id'],reserved_sku))
         s['data'].pop('material_reservations',None)
         result['document_id']=snapshot(db,record,user,'batch-manufacturing-record',s)
     elif action=='return_material':
@@ -775,7 +800,9 @@ def batch_action(db,record,user,action,data,s,result):
         q=decimal(data['quantity']);require(q+returned<=sum(decimal(i['quantity'])-decimal(i['waste']) for i in original),'Return exceeds original non-waste consumption')
         sku='lot:'+data['lot'];row=stock_row(db,user,sku)
         movement(db,record,user,sku,q,'return','return:'+data['reference'])
-        db.execute('UPDATE stock SET quantity=?,updated_at=? WHERE workspace_id=? AND sku=?',(str(decimal(row['quantity'])+q),now(),user['workspace_id'],sku))
+        new_quantity=decimal(row['quantity'])+q
+        new_held=decimal(row['held']) if json.loads(row['data'])['quality']=='Released' else new_quantity
+        db.execute('UPDATE stock SET quantity=?,held=?,updated_at=? WHERE workspace_id=? AND sku=?',(str(new_quantity),str(new_held),now(),user['workspace_id'],sku))
         adjustment={**data,'by':user['email'],'at':now(),'cost_reduction_paise':cents(amount(q*decimal(json.loads(row['data'])['cost'])))}
         adjusted=s['data']['production']['total_paise']-sum(i['cost_reduction_paise'] for i in s['data'].get('returns',[]))+sum(i['delta_paise'] for i in s['data'].get('cost_adjustments',[]))-adjustment['cost_reduction_paise']
         require(adjusted>=0,'Return would make the adjusted batch cost negative; reconcile cost corrections first')
@@ -790,6 +817,8 @@ def batch_action(db,record,user,action,data,s,result):
         result['document_id']=snapshot(db,record,user,'batch-release-and-label',s)
     elif action=='quality_reject':
         require(s['stage']=='produced','Quality rejection applies to produced output awaiting release')
+        sku='finished:'+p['batch_number'];row=stock_row(db,user,sku);metadata=json.loads(row['data']);metadata['quality']='Rejected'
+        db.execute('UPDATE stock SET data=? WHERE workspace_id=? AND sku=?',(dump(metadata),user['workspace_id'],sku))
         s['stage']='rejected';s['data']['quality_rejection']={**data,'by':user['email'],'at':now()}
         result['document_id']=snapshot(db,record,user,'quality-rejection',s)
     elif action in ('trace','recall'):

@@ -25,11 +25,11 @@ from backend.worker import run_once
 
 
 @contextmanager
-def service(folder, database):
+def service(folder, database, *, bootstrap=None, extra_env=None):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-    env={**os.environ,'DATABASE_URL':'sqlite:///'+str(database),'JWT_SECRET':'isolated-contract-test-key-only','BCRYPT_ROUNDS':'4','ENVIRONMENT':'development','OPENROUTER_API_KEY':''}
-    boot="import app.models; from app.core.database import Base,engine; Base.metadata.create_all(engine); import uvicorn; uvicorn.run('app.main:app',host='127.0.0.1',port="+str(port)+",log_level='error')"
+    env={**os.environ,'DATABASE_URL':'sqlite:///'+str(database),'JWT_SECRET':'isolated-contract-test-key-only','BCRYPT_ROUNDS':'4','ENVIRONMENT':'development','OPENROUTER_API_KEY':'',**(extra_env or {})}
+    boot=bootstrap or "import app.models; from app.core.database import Base,engine; Base.metadata.create_all(engine); import uvicorn; uvicorn.run('app.main:app',host='127.0.0.1',port="+str(port)+",log_level='error')"
     with tempfile.TemporaryFile() as output:
         process=subprocess.Popen([str(folder/'.venv/bin/python'),'-c',boot],cwd=folder,env=env,stdout=output,stderr=output)
         try:
@@ -93,6 +93,35 @@ def check(inventory,scheduler):
                     command(order,'reserve');deliver();assert workflow(order)['stage']=='reserved'
                     command(order,'dispatch',{'reference':'synthetic-dispatch'});deliver();assert workflow(order)['stage']=='dispatched'
                     assert json_request(inv,'GET','/stock')[0]['quantity']==8
+                    batch=create('batch');command(batch,'connect_lot_inventory')
+                    evidence=json_request(suite,'POST','/api/records/'+batch['id']+'/files',files={'file':('quality.txt',b'Lot receiving and quality review','text/plain')})['id']
+                    item(batch,'recipe',{'version':'1','ingredient':'Flour','quantity':'2.125','unit':'kg'})
+                    item(batch,'lot',{'lot':'F1','ingredient':'Flour','supplier':'Miller','quantity':'10.125','unit':'kg','cost':'50','expiry':start.date().isoformat(),'quality':'Released','file_id':evidence})
+                    item(batch,'usage',{'lot':'F1','quantity':'2.125','waste':'.125','unit':'kg'})
+                    command(batch,'receive_lots');deliver()
+                    command(batch,'adjust_lot',{'sku':'lot:F1','expected_quantity':'10.125','quantity':'10.5','reference':'LOT-COUNT1','reason':'Verified physical count','file_id':evidence});deliver()
+                    assert len(json_request(suite,'GET','/api/inventory/adjustments'))==1
+                    command(batch,'reserve_materials');deliver()
+                    command(batch,'produce');deliver();assert workflow(batch)['stage']=='produced'
+                    command(batch,'return_material',{'lot':'F1','quantity':'.5','reference':'RETURN1','reason':'Unused input'});deliver()
+                    command(batch,'quality_release',{'checks':'Approved quality tests','file_id':evidence});deliver()
+                    command(batch,'dispatch_batch',{'customer':'Shop','reference':'D1','quantity':20});deliver()
+                    command(batch,'recall',{'reason':'Supplier recall'});deliver()
+                    command(batch,'dispose_output',{'quantity':72,'reference':'DISP1','reason':'Approved disposal','file_id':evidence});deliver()
+                    balances=json_request(inv,'GET','/suite/lots',params={'warehouse_id':warehouse['id']})['balances']
+                    assert next(x for x in balances if x['sku']=='lot:F1')['quantity']=='8.875'
+                    assert next(x for x in balances if x['sku'].startswith('finished:'))['quantity']=='0'
+                    parts_contract=create('amc');command(parts_contract,'inventory_refresh');deliver()
+                    parts_asset=item(parts_contract,'asset',{'site':'Parts site','serial':'PARTS-1','model':'Unit','warranty':'','coverage':'Parts'})['id']
+                    past=datetime.now(timezone.utc)-timedelta(hours=2)
+                    parts_visit=item(parts_contract,'visit',{'asset_id':parts_asset,'technician':body['email'],'start':past.isoformat(),'end':(past+timedelta(minutes=30)).isoformat(),'chargeable':'Yes','checklist':'Replace filter'})['id']
+                    item(parts_contract,'part',{'visit_id':parts_visit,'part':'Test part','sku':'TEA','quantity':2,'cost':200})
+                    command(parts_contract,'reserve_parts',{'item_id':parts_visit});deliver()
+                    evidence=json_request(suite,'POST','/api/records/'+parts_contract['id']+'/files',files={'file':('service.txt',b'Service completed and part used','text/plain')})['id']
+                    command(parts_contract,'complete_visit',{'item_id':parts_visit,'notes':'Part fitted','file_id':evidence})
+                    command(parts_contract,'consume_parts',{'item_id':parts_visit});deliver()
+                    assert workflow(parts_contract)['data']['parts_receipts'][parts_visit]['status']=='dispatched'
+                    assert json_request(inv,'GET','/stock')[0]['quantity']==6
                     contract=create('amc');command(contract,'connect_scheduler')
                     asset=item(contract,'asset',{'site':'Test site','serial':'TEST-1','model':'Test unit','warranty':'','coverage':'Service'})['id']
                     visit=item(contract,'visit',{'asset_id':asset,'technician':body['email'],'start':start.isoformat(),'end':(start+timedelta(minutes=30)).isoformat(),'chargeable':'No','checklist':'Check pressure','meeting_type_id':str(meeting['id']),'customer_email':'customer@example.com'})['id']
@@ -100,7 +129,7 @@ def check(inventory,scheduler):
                     command(contract,'scheduler_reschedule',{'item_id':visit,'start':(start+timedelta(hours=1)).isoformat(),'end':(start+timedelta(minutes=90)).isoformat()});deliver()
                     command(contract,'scheduler_cancel',{'item_id':visit});deliver()
                     bookings=json_request(sched,'GET','bookings/');assert len(bookings)==1 and bookings[0]['status']=='cancelled'
-                    return {'isolated_databases':3,'real_http_services':2,'inventory_reserve_dispatch':'passed','scheduler_create_reschedule_cancel':'passed','stock_remaining':8,'bookings_created':1,'external_provider_requests':0}
+                    return {'isolated_databases':3,'real_http_services':2,'inventory_reserve_dispatch':'passed','batch_fractional_lifecycle':'passed','scheduler_create_reschedule_cancel':'passed','amc_parts_reserve_consume':'passed','stock_remaining':6,'bookings_created':1,'external_provider_requests':0}
 
 
 if __name__=='__main__':

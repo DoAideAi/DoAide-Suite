@@ -2,8 +2,10 @@
   "isolated_databases": 3,
   "real_http_services": 2,
   "inventory_reserve_dispatch": "passed",
+  "batch_fractional_lifecycle": "passed",
   "scheduler_create_reschedule_cancel": "passed",
-  "stock_remaining": 8,
+  "amc_parts_reserve_consume": "passed",
+  "stock_remaining": 6,
   "bookings_created": 1,
   "external_provider_requests": 0
 }

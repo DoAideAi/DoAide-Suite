@@ -27,7 +27,7 @@ def check(image,host=None):
                 time.sleep(.25)
             else:raise AssertionError('Container did not become ready')
             specification=client.get('/openapi.json').json();version=specification['info']['version']
-            assert version=='0.5.0'
+            assert version=='0.6.0'
             assert all(route in specification['paths'] for route in ('/api/fees/academic','/api/webhooks/whatsapp','/api/records/{record_id}/recordings','/api/contractor/{token}/start'))
             response=client.post('/api/auth/register',json={'email':'container-check@example.test','password':'synthetic-container-test-password'})
             assert response.status_code==201,response.text
@@ -42,7 +42,7 @@ def check(image,host=None):
             assert pdf.status_code==200 and len(PdfReader(io.BytesIO(pdf.content)).pages)>=1
             assert client.get('/api/documents/'+doc+'/pdf').content==pdf.content
             assert client.get('/api/billing').json()['mode']=='local'
-            assert client.get('/api/integrations').json()['authorities']=={'inventory':{'configured':False,'active':False},'scheduler':{'configured':False,'active':False}}
+            assert client.get('/api/integrations').json()['authorities']=={'inventory':{'configured':False,'active':False},'scheduler':{'configured':False,'active':False},'inventory_lots':{'configured':False,'active':False}}
             report=client.get('/api/reports/portfolio').json();assert report['total_records']==1 and len(report['totals'])==12
             run('exec',container,'python','-m','backend.worker','--once')
             state=client.get('/api/diagnostics').json();assert state['schema_version']==5 and state['worker_healthy']
