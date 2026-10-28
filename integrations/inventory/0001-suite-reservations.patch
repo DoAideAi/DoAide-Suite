@@ -1,0 +1,571 @@
+From 14082a4d2b10307f270851a7561f822bc867f107 Mon Sep 17 00:00:00 2001
+From: r2st <102911930+r2st@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 22:23:19 +0530
+Subject: [PATCH] Add authoritative retry-safe Suite stock reservations
+
+---
+ backend/app/main.py                      |   2 +
+ backend/app/models/__init__.py           |   2 +
+ backend/app/models/suite_reservation.py  |  15 +++
+ backend/app/routers/products.py          |   3 +
+ backend/app/routers/purchase_orders.py   |   2 +
+ backend/app/routers/sales_orders.py      |   8 +-
+ backend/app/routers/stock.py             |   6 ++
+ backend/app/routers/stock_adjustments.py |   6 +-
+ backend/app/routers/suite.py             | 132 +++++++++++++++++++++++
+ backend/app/services/reservations.py     |  42 ++++++++
+ backend/scripts/migrate_suite.py         |  34 ++++++
+ backend/tests/test_suite.py              | 126 ++++++++++++++++++++++
+ 12 files changed, 374 insertions(+), 4 deletions(-)
+ create mode 100644 backend/app/models/suite_reservation.py
+ create mode 100644 backend/app/routers/suite.py
+ create mode 100644 backend/app/services/reservations.py
+ create mode 100644 backend/scripts/migrate_suite.py
+ create mode 100644 backend/tests/test_suite.py
+
+diff --git a/backend/app/main.py b/backend/app/main.py
+index d4eb0f0..2410d9e 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -16,6 +16,7 @@ from app.routers import (
+     reports,
+     sales_orders,
+     stock,
++    suite,
+     stock_adjustments,
+     suppliers,
+     warehouses,
+@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
+     app.include_router(categories.router)
+     app.include_router(warehouses.router)
+     app.include_router(stock.router)
++    app.include_router(suite.router)
+     app.include_router(suppliers.router)
+     app.include_router(customers.router)
+     app.include_router(purchase_orders.router)
+diff --git a/backend/app/models/__init__.py b/backend/app/models/__init__.py
+index f0aaad1..e28073f 100644
+--- a/backend/app/models/__init__.py
++++ b/backend/app/models/__init__.py
+@@ -32,3 +32,5 @@ __all__ = [
+     "UserRole",
+     "Warehouse",
+ ]
++
++from app.models.suite_reservation import SuiteReservation
+diff --git a/backend/app/models/suite_reservation.py b/backend/app/models/suite_reservation.py
+new file mode 100644
+index 0000000..689cd82
+--- /dev/null
++++ b/backend/app/models/suite_reservation.py
+@@ -0,0 +1,15 @@
++from sqlalchemy import JSON, String, UniqueConstraint
++from sqlalchemy.orm import Mapped, mapped_column
++from app.core.database import Base
++from app.models.mixins import BusinessScopedMixin, TimestampMixin
++
++
++class SuiteReservation(Base, BusinessScopedMixin, TimestampMixin):
++    __tablename__ = 'suite_reservations'
++    __table_args__ = (UniqueConstraint('business_id', 'reference', name='uq_suite_reservation_reference'),)
++    id: Mapped[int] = mapped_column(primary_key=True)
++    reference: Mapped[str] = mapped_column(String(160))
++    fingerprint: Mapped[str] = mapped_column(String(64))
++    lines: Mapped[list] = mapped_column(JSON)
++    status: Mapped[str] = mapped_column(String(20), default='reserved')
++    expires_at: Mapped[str] = mapped_column(String(40))
+diff --git a/backend/app/routers/products.py b/backend/app/routers/products.py
+index ff453ad..84b5559 100644
+--- a/backend/app/routers/products.py
++++ b/backend/app/routers/products.py
+@@ -1,3 +1,4 @@
++from app.services.reservations import lock_stock
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.orm import Session
+ 
+@@ -62,6 +63,7 @@ def create_product(body: ProductCreate, user: User = Depends(get_current_busines
+ def update_product(
+     product_id: int, body: ProductUpdate, user: User = Depends(get_current_business), db: Session = Depends(get_db)
+ ):
++    lock_stock(db, user.business_id)
+     p = db.query(Product).filter(
+         Product.id == product_id, Product.business_id == user.business_id, Product.deleted_at.is_(None)
+     ).first()
+@@ -77,6 +79,7 @@ def update_product(
+ 
+ @router.delete("/{product_id}", status_code=204, dependencies=[Depends(require_staff)])
+ def delete_product(product_id: int, user: User = Depends(get_current_business), db: Session = Depends(get_db)):
++    lock_stock(db, user.business_id)
+     p = db.query(Product).filter(
+         Product.id == product_id, Product.business_id == user.business_id, Product.deleted_at.is_(None)
+     ).first()
+diff --git a/backend/app/routers/purchase_orders.py b/backend/app/routers/purchase_orders.py
+index c126889..91fa680 100644
+--- a/backend/app/routers/purchase_orders.py
++++ b/backend/app/routers/purchase_orders.py
+@@ -1,3 +1,4 @@
++from app.services.reservations import lock_stock, check_quantity, check_refs
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.orm import Session
+ 
+@@ -94,6 +95,7 @@ def receive_items(
+     user: User = Depends(get_current_business),
+     db: Session = Depends(get_db),
+ ):
++    lock_stock(db, user.business_id)
+     po = db.query(PurchaseOrder).filter(
+         PurchaseOrder.id == order_id, PurchaseOrder.business_id == user.business_id
+     ).first()
+diff --git a/backend/app/routers/sales_orders.py b/backend/app/routers/sales_orders.py
+index c48f3e6..0c451be 100644
+--- a/backend/app/routers/sales_orders.py
++++ b/backend/app/routers/sales_orders.py
+@@ -1,3 +1,4 @@
++from app.services.reservations import lock_stock, check_quantity, check_refs
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.orm import Session
+ 
+@@ -88,6 +89,7 @@ def ship_items(
+     user: User = Depends(get_current_business),
+     db: Session = Depends(get_db),
+ ):
++    lock_stock(db, user.business_id)
+     so = db.query(SalesOrder).filter(
+         SalesOrder.id == order_id, SalesOrder.business_id == user.business_id
+     ).first()
+@@ -105,8 +107,10 @@ def ship_items(
+             StockLevel.warehouse_id == so.warehouse_id,
+             StockLevel.business_id == user.business_id,
+         ).first()
+-        if sl:
+-            sl.quantity = max(0, sl.quantity - remaining)
++        if not sl:
++            raise HTTPException(409, "No stock for this product/warehouse")
++        check_quantity(db, sl, sl.quantity - remaining)
++        sl.quantity -= remaining
+         si.shipped_quantity = si.quantity
+ 
+     all_shipped = all(si.shipped_quantity >= si.quantity for si in so.items)
+diff --git a/backend/app/routers/stock.py b/backend/app/routers/stock.py
+index c3b0a1a..d0abb5d 100644
+--- a/backend/app/routers/stock.py
++++ b/backend/app/routers/stock.py
+@@ -1,3 +1,4 @@
++from app.services.reservations import lock_stock, check_quantity, check_refs
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.orm import Session
+ 
+@@ -31,6 +32,8 @@ def list_stock(
+ 
+ @router.post("", response_model=StockLevelOut, status_code=201, dependencies=[Depends(require_staff)])
+ def create_stock_level(body: StockLevelCreate, user: User = Depends(get_current_business), db: Session = Depends(get_db)):
++    lock_stock(db, user.business_id)
++    check_refs(db, user.business_id, body.product_id, body.warehouse_id)
+     existing = db.query(StockLevel).filter(
+         StockLevel.product_id == body.product_id,
+         StockLevel.warehouse_id == body.warehouse_id,
+@@ -50,11 +53,14 @@ def create_stock_level(body: StockLevelCreate, user: User = Depends(get_current_
+ def update_stock_level(
+     stock_id: int, body: StockLevelUpdate, user: User = Depends(get_current_business), db: Session = Depends(get_db)
+ ):
++    lock_stock(db, user.business_id)
+     sl = db.query(StockLevel).filter(
+         StockLevel.id == stock_id, StockLevel.business_id == user.business_id
+     ).first()
+     if not sl:
+         raise HTTPException(status_code=404, detail="Stock level not found")
++    if body.quantity is not None:
++        check_quantity(db, sl, body.quantity)
+     for field, value in body.model_dump(exclude_unset=True).items():
+         setattr(sl, field, value)
+     db.commit()
+diff --git a/backend/app/routers/stock_adjustments.py b/backend/app/routers/stock_adjustments.py
+index 34df72e..fa8cfdb 100644
+--- a/backend/app/routers/stock_adjustments.py
++++ b/backend/app/routers/stock_adjustments.py
+@@ -1,3 +1,4 @@
++from app.services.reservations import lock_stock, check_quantity, check_refs
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.orm import Session
+ 
+@@ -29,6 +30,8 @@ def list_adjustments(
+ def create_adjustment(
+     body: StockAdjustmentCreate, user: User = Depends(get_current_business), db: Session = Depends(get_db)
+ ):
++    lock_stock(db, user.business_id)
++    check_refs(db, user.business_id, body.product_id, body.warehouse_id)
+     adj = StockAdjustment(
+         business_id=user.business_id,
+         product_id=body.product_id,
+@@ -46,9 +49,8 @@ def create_adjustment(
+         StockLevel.business_id == user.business_id,
+     ).first()
+     if sl:
++        check_quantity(db, sl, sl.quantity + body.quantity)
+         sl.quantity += body.quantity
+-        if sl.quantity < 0:
+-            sl.quantity = 0
+     else:
+         sl = StockLevel(
+             business_id=user.business_id,
+diff --git a/backend/app/routers/suite.py b/backend/app/routers/suite.py
+new file mode 100644
+index 0000000..c190d20
+--- /dev/null
++++ b/backend/app/routers/suite.py
+@@ -0,0 +1,132 @@
++"""Authenticated, retry-safe stock commands. This API sends no notifications."""
++import hashlib
++import json
++from decimal import Decimal
++from datetime import datetime, timedelta, timezone
++from typing import Literal
++from fastapi import APIRouter, Depends, HTTPException, Query, Header
++from pydantic import BaseModel, ConfigDict, Field, AwareDatetime
++from sqlalchemy.orm import Session
++from app.core.database import get_db
++from app.core.deps import get_current_business, require_staff
++from app.models.user import User
++from app.models.product import Product
++from app.models.stock_level import StockLevel
++from app.models.suite_reservation import SuiteReservation
++from app.services.reservations import lock_stock, held, check_refs
++
++def expected_business(expected: int | None = Header(None, alias='X-DoAide-Business-ID'), user: User = Depends(get_current_business)):
++    if expected is not None and expected != user.business_id:
++        raise HTTPException(403, 'Connection credential belongs to a different business')
++
++
++router = APIRouter(prefix='/suite', tags=['suite'], dependencies=[Depends(expected_business)])
++
++
++class Line(BaseModel):
++    model_config = ConfigDict(extra='forbid')
++    product_id: int = Field(gt=0)
++    warehouse_id: int = Field(gt=0)
++    quantity: int = Field(gt=0, le=1000000000, strict=True)
++    price: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)
++    tax: Decimal | None = Field(default=None, ge=0, le=100)
++    unit: str | None = Field(default=None, max_length=100)
++
++
++class Reservation(BaseModel):
++    model_config = ConfigDict(extra='forbid')
++    reference: str = Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9:_-]+$')
++    lines: list[Line] = Field(min_length=1, max_length=200)
++    expires_at: AwareDatetime
++
++
++def result(row):
++    status = row.status
++    if status == 'reserved' and datetime.fromisoformat(row.expires_at) <= datetime.now(timezone.utc):
++        status = 'expired'
++    return {'business_id': row.business_id, 'reference': row.reference, 'reservation_id': row.id, 'status': status,
++            'lines': row.lines, 'expires_at': row.expires_at}
++
++
++@router.get('/stock')
++def stock(warehouse_id: int = Query(gt=0), skip: int = Query(0, ge=0),
++          limit: int = Query(200, ge=1, le=200), user: User = Depends(get_current_business), db: Session = Depends(get_db)):
++    rows = db.query(StockLevel, Product).join(Product, Product.id == StockLevel.product_id).filter(
++        StockLevel.business_id == user.business_id, Product.business_id == user.business_id,
++        StockLevel.warehouse_id == warehouse_id, Product.deleted_at.is_(None), Product.is_active.is_(True)
++    ).order_by(StockLevel.id).offset(skip).limit(limit).all()
++    return [{'business_id': user.business_id, 'product_id': p.id, 'warehouse_id': s.warehouse_id, 'sku': p.sku, 'name': p.name,
++             'unit': p.unit, 'price': str(p.selling_price or 0), 'tax': str(p.tax_rate or 0),
++             'quantity': s.quantity, 'held': held(db, user.business_id, p.id, s.warehouse_id)} for s, p in rows]
++
++
++@router.post('/reservations', dependencies=[Depends(require_staff)])
++def reserve(body: Reservation, user: User = Depends(get_current_business), db: Session = Depends(get_db)):
++    lock_stock(db, user.business_id)
++    lines = sorted([x.model_dump(mode='json',exclude_none=True) for x in body.lines], key=lambda x: (x['product_id'], x['warehouse_id']))
++    if len({(x['product_id'], x['warehouse_id']) for x in lines}) != len(lines):
++        raise HTTPException(422, 'Aggregate duplicate product/warehouse lines')
++    expiry = body.expires_at.astimezone(timezone.utc).isoformat()
++    fingerprint = hashlib.sha256(json.dumps({'lines': lines, 'expires_at': expiry}, sort_keys=True).encode()).hexdigest()
++    prior = db.query(SuiteReservation).filter_by(business_id=user.business_id, reference=body.reference).first()
++    if prior:
++        if prior.fingerprint != fingerprint:
++            raise HTTPException(409, 'Reservation reference was already used with different contents')
++        db.commit()
++        return result(prior)
++    if not datetime.now(timezone.utc) < body.expires_at <= datetime.now(timezone.utc) + timedelta(days=7):
++        raise HTTPException(422, 'Reservation must expire within seven days')
++    for line in lines:
++        check_refs(db, user.business_id, line['product_id'], line['warehouse_id'])
++        product = db.get(Product, line['product_id'])
++        if ('price' in line and Decimal(line['price']) != (product.selling_price or 0)) or ('tax' in line and Decimal(line['tax']) != (product.tax_rate or 0)) or ('unit' in line and line['unit'] != product.unit):
++            raise HTTPException(409, 'Catalogue changed; refresh prices and reconfirm the order')
++        stock = db.query(StockLevel).filter_by(business_id=user.business_id,
++            product_id=line['product_id'], warehouse_id=line['warehouse_id']).first()
++        if not stock or stock.quantity - held(db, user.business_id, line['product_id'], line['warehouse_id']) < line['quantity']:
++            raise HTTPException(409, 'Insufficient available stock')
++    row = SuiteReservation(business_id=user.business_id, reference=body.reference, fingerprint=fingerprint,
++                           lines=lines, expires_at=expiry, status='reserved')
++    db.add(row)
++    db.commit()
++    return result(row)
++
++
++@router.get('/reservations/{reference}')
++def lookup(reference: str, user: User = Depends(get_current_business), db: Session = Depends(get_db)):
++    row = db.query(SuiteReservation).filter_by(business_id=user.business_id, reference=reference).first()
++    if not row:
++        raise HTTPException(404, 'Reservation not found')
++    return result(row)
++
++
++@router.post('/reservations/{reference}/{command}', dependencies=[Depends(require_staff)])
++def transition(reference: str, command: Literal['dispatch', 'cancel', 'reconcile'],
++               user: User = Depends(get_current_business), db: Session = Depends(get_db)):
++    lock_stock(db, user.business_id)
++    row = db.query(SuiteReservation).filter_by(business_id=user.business_id, reference=reference).first()
++    if command == 'reconcile':
++        if not row:
++            if len(reference)>160 or not __import__('re').fullmatch(r'[A-Za-z0-9:_-]+',reference):raise HTTPException(422,'Invalid reference')
++            row=SuiteReservation(business_id=user.business_id,reference=reference,fingerprint='missing',lines=[],status='missing',expires_at=datetime.now(timezone.utc).isoformat())
++            db.add(row)
++        db.commit()
++        return result(row)
++    if not row:
++        raise HTTPException(404, 'Reservation not found')
++    target = 'dispatched' if command == 'dispatch' else 'cancelled'
++    if row.status == target or command == 'cancel' and row.status == 'expired':
++        db.commit()
++        return result(row)
++    if row.status != 'reserved':
++        raise HTTPException(409, 'Reservation is ' + row.status)
++    if command == 'dispatch':
++        for line in row.lines:
++            stock = db.query(StockLevel).filter_by(business_id=user.business_id,
++                product_id=line['product_id'], warehouse_id=line['warehouse_id']).first()
++            if not stock or stock.quantity < line['quantity']:
++                raise HTTPException(409, 'Stock is inconsistent; reconcile Inventory')
++            stock.quantity -= line['quantity']
++    row.status = target
++    db.commit()
++    return result(row)
+diff --git a/backend/app/services/reservations.py b/backend/app/services/reservations.py
+new file mode 100644
+index 0000000..69236c5
+--- /dev/null
++++ b/backend/app/services/reservations.py
+@@ -0,0 +1,42 @@
++"""Inventory is authoritative. All stock writers share the business transaction lock."""
++from datetime import datetime, timezone
++from fastapi import HTTPException
++from sqlalchemy import update
++from app.models.business import Business
++from app.models.suite_reservation import SuiteReservation
++from app.models.product import Product
++from app.models.warehouse import Warehouse
++
++
++def timestamp():
++    return datetime.now(timezone.utc).isoformat()
++
++
++def lock_stock(db, business_id):
++    # An UPDATE acquires a write lock on SQLite and a row lock on PostgreSQL.
++    # Unlike SELECT FOR UPDATE it also serializes SQLite writers.
++    db.execute(update(Business).where(Business.id == business_id).values(id=Business.id))
++    db.expire_all()
++    db.query(SuiteReservation).filter(SuiteReservation.business_id == business_id,
++        SuiteReservation.status == 'reserved', SuiteReservation.expires_at <= timestamp()).update(
++            {'status': 'expired'}, synchronize_session=False)
++    db.flush()
++
++
++def held(db, business_id, product_id, warehouse_id):
++    rows = db.query(SuiteReservation).filter(SuiteReservation.business_id == business_id,
++        SuiteReservation.status == 'reserved', SuiteReservation.expires_at > timestamp()).all()
++    return sum(line['quantity'] for row in rows for line in row.lines
++               if line['product_id'] == product_id and line['warehouse_id'] == warehouse_id)
++
++
++def check_quantity(db, stock, quantity):
++    if quantity < held(db, stock.business_id, stock.product_id, stock.warehouse_id) or quantity < 0:
++        raise HTTPException(409, 'Insufficient unreserved stock; release reservations first')
++
++
++def check_refs(db, business_id, product_id, warehouse_id):
++    product = db.query(Product).filter_by(id=product_id, business_id=business_id, deleted_at=None, is_active=True).first()
++    warehouse = db.query(Warehouse).filter_by(id=warehouse_id, business_id=business_id, deleted_at=None).first()
++    if not product or not warehouse:
++        raise HTTPException(404, 'Product or warehouse not found in this business')
+diff --git a/backend/scripts/migrate_suite.py b/backend/scripts/migrate_suite.py
+new file mode 100644
+index 0000000..34fd427
+--- /dev/null
++++ b/backend/scripts/migrate_suite.py
+@@ -0,0 +1,34 @@
++"""Add only the Suite authority table; preserve the initialized service schema."""
++import json
++import os
++from pathlib import Path
++import sys
++sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
++from sqlalchemy import inspect
++import app.models
++from app.core.database import engine
++from app.models.suite_reservation import SuiteReservation
++
++
++def migrate(target):
++    table=SuiteReservation.__table__
++    with target.begin() as connection:
++        inspector=inspect(connection)
++        if not all(inspector.has_table(name) for name in ('businesses', 'stock_levels')):
++            raise ValueError('Initialize the existing Inventory schema first')
++        existed=inspector.has_table(table.name)
++        table.create(connection,checkfirst=True)
++        inspector=inspect(connection)
++        columns={value['name']:value for value in inspector.get_columns(table.name)}
++        if set(columns)!={column.name for column in table.columns}:
++            raise ValueError('Existing Suite authority table is incompatible')
++        unique={tuple(value['column_names']) for value in inspector.get_unique_constraints(table.name)}
++        if ('business_id','reference') not in unique:
++            raise ValueError('Business/reference uniqueness is missing')
++    return {'migration':table.name+'-v1','created':not existed,'verified':True}
++
++
++if __name__=='__main__':
++    if not os.environ.get('DATABASE_URL'):
++        raise SystemExit('Set DATABASE_URL explicitly to the intended test/deployment database')
++    print(json.dumps(migrate(engine),indent=2))
+diff --git a/backend/tests/test_suite.py b/backend/tests/test_suite.py
+new file mode 100644
+index 0000000..884f9bd
+--- /dev/null
++++ b/backend/tests/test_suite.py
+@@ -0,0 +1,126 @@
++from datetime import datetime, timedelta, timezone
++from concurrent.futures import ThreadPoolExecutor
++from threading import Barrier
++from types import SimpleNamespace
++import pytest
++from fastapi import HTTPException
++from sqlalchemy import create_engine
++from sqlalchemy.orm import Session
++from app.core.database import Base
++from app.models.business import Business
++from app.models.product import Product
++from app.models.warehouse import Warehouse
++from app.models.stock_level import StockLevel
++from app.models.suite_reservation import SuiteReservation
++from app.routers.suite import reserve, Reservation
++
++
++def setup(c, quantity=10):
++    p = c.post('/products', json={'sku':'TEA','name':'Tea','selling_price':100,'unit':'piece'}).json()
++    w = c.post('/warehouses', json={'name':'Main'}).json()
++    stock = c.post('/stock',json={'product_id':p['id'],'warehouse_id':w['id'],'quantity':quantity}).json()
++    return stock, {'reference':'suite-order-1','expires_at':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),
++        'lines':[{'product_id':p['id'],'warehouse_id':w['id'],'quantity':7}]}
++
++
++def test_retry_dispatch_once_and_changed_reference_rejected(auth_client):
++    c=auth_client;s,b=setup(c)
++    a=c.post('/suite/reservations',json=b)
++    assert a.status_code==200,a.text
++    assert c.post('/suite/reservations',json=b).json()==a.json()
++    assert c.get('/stock').json()[0]['quantity']==10
++    assert c.get('/suite/stock',params={'warehouse_id':s['warehouse_id']}).json()[0]['held']==7
++    assert c.post('/suite/reservations',json={**b,'lines':[{**b['lines'][0],'quantity':8}]}).status_code==409
++    assert c.post('/suite/reservations/suite-order-1/dispatch').json()['status']=='dispatched'
++    assert c.post('/suite/reservations/suite-order-1/dispatch').json()['status']=='dispatched'
++    assert c.get('/stock').json()[0]['quantity']==3
++    assert c.post('/suite/reservations',json=b).json()['status']=='dispatched'
++    assert c.post('/suite/reservations/suite-order-1/cancel').status_code==409
++
++
++def test_reservation_blocks_native_count_adjustment_and_shipping(auth_client):
++    c=auth_client;s,b=setup(c)
++    assert c.post('/suite/reservations',json=b).status_code==200
++    assert c.patch('/stock/'+str(s['id']),json={'quantity':6}).status_code==409
++    # Rollback is handled by production get_db; test override retains the Session.
++    customer=c.post('/customers',json={'name':'Buyer'}).json()
++    order=c.post('/sales-orders',json={'customer_id':customer['id'],'warehouse_id':s['warehouse_id'],
++        'items':[{'product_id':s['product_id'],'quantity':5,'unit_price':100}]}).json()
++    assert c.post('/sales-orders/'+str(order['id'])+'/ship').status_code==409
++    assert c.post('/suite/reservations/suite-order-1/cancel').json()['status']=='cancelled'
++    assert c.post('/sales-orders/'+str(order['id'])+'/ship').status_code==200
++    assert c.get('/stock').json()[0]['quantity']==5
++
++
++def test_expired_reference_does_not_resurrect(auth_client,db_session):
++    c=auth_client;s,b=setup(c)
++    assert c.post('/suite/reservations',json=b).status_code==200
++    row=db_session.query(SuiteReservation).one();row.expires_at=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat();db_session.commit()
++    assert c.post('/suite/reservations/suite-order-1/dispatch').status_code==409
++    assert c.get('/suite/reservations/suite-order-1').json()['status']=='expired'
++    assert c.get('/suite/stock',params={'warehouse_id':s['warehouse_id']}).json()[0]['held']==0
++    assert c.post('/suite/reservations',json={**b,'reference':'suite-order-2'}).status_code==200
++
++
++def test_business_isolation_and_viewer_permissions(auth_client,db_session):
++    c=auth_client;s,b=setup(c);assert c.post('/suite/reservations',json=b).status_code==200
++    response=c.post('/auth/register',json={'email':'other@example.com','password':'OtherPass123!','business_name':'Other','full_name':'Other'})
++    c.headers['Authorization']='Bearer '+response.json()['access_token']
++    assert c.get('/suite/reservations/suite-order-1').status_code==404
++    assert c.post('/suite/reservations',json=b).status_code==404
++    assert c.post('/stock',json={'product_id':s['product_id'],'warehouse_id':s['warehouse_id'],'quantity':1}).status_code==404
++    from app.models.user import User,UserRole
++    user=db_session.query(User).filter_by(email='other@example.com').one();user.role=UserRole.VIEWER;db_session.commit()
++    assert c.post('/suite/reservations',json=b).status_code==403
++
++
++def test_concurrent_reservations_use_one_authoritative_balance(tmp_path):
++    engine=create_engine('sqlite:///'+str(tmp_path/'race.db'),connect_args={'check_same_thread':False,'timeout':10})
++    Base.metadata.create_all(engine)
++    with Session(engine) as db:
++        business=Business(name='Race');db.add(business);db.flush()
++        product=Product(business_id=business.id,sku='RACE',name='Race');warehouse=Warehouse(business_id=business.id,name='Main');db.add_all([product,warehouse]);db.flush()
++        db.add(StockLevel(business_id=business.id,product_id=product.id,warehouse_id=warehouse.id,quantity=10))
++        ids=(business.id,product.id,warehouse.id);db.commit()
++    barrier=Barrier(2)
++    def run(index):
++        with Session(engine) as db:
++            body=Reservation(reference='race-'+str(index),expires_at=datetime.now(timezone.utc)+timedelta(hours=1),lines=[{'product_id':ids[1],'warehouse_id':ids[2],'quantity':7}])
++            barrier.wait()
++            try:reserve(body,SimpleNamespace(business_id=ids[0]),db);return 200
++            except HTTPException as exc:db.rollback();return exc.status_code
++    with ThreadPoolExecutor(2) as pool:assert sorted(pool.map(run,[1,2]))==[200,409]
++    with Session(engine) as db:assert db.query(SuiteReservation).count()==1
++
++
++def test_additive_migration_preserves_schema_and_is_repeatable(tmp_path):
++    from scripts.migrate_suite import migrate
++    engine=create_engine('sqlite:///'+str(tmp_path/'migrate.db'))
++    tables=[table for table in Base.metadata.sorted_tables if not table.name.startswith('suite_')]
++    Base.metadata.create_all(engine,tables=tables)
++    with Session(engine) as db:
++        db.add(Business(name='Preserved'))
++        db.commit()
++    assert migrate(engine)['created']
++    assert not migrate(engine)['created']
++    with Session(engine) as db:assert db.query(Business).one().name=='Preserved'
++
++
++def test_price_drift_and_wrong_business_are_rejected_before_hold(auth_client,db_session):
++    c=auth_client;stock,body=setup(c)
++    body['lines'][0].update(price='100.00',tax='0',unit='piece')
++    c.headers['X-DoAide-Business-ID']='999'
++    assert c.post('/suite/reservations',json=body).status_code==403
++    assert db_session.query(SuiteReservation).count()==0
++    del c.headers['X-DoAide-Business-ID']
++    assert c.patch('/products/'+str(stock['product_id']),json={'selling_price':110}).status_code==200
++    assert c.post('/suite/reservations',json=body).status_code==409
++    assert db_session.query(SuiteReservation).count()==0
++
++
++def test_missing_reconciliation_fences_a_late_create(auth_client,db_session):
++    c=auth_client;stock,body=setup(c)
++    r=c.post('/suite/reservations/'+body['reference']+'/reconcile')
++    assert r.status_code==200 and r.json()['status']=='missing'
++    assert c.post('/suite/reservations',json=body).status_code==409
++    assert c.get('/suite/stock',params={'warehouse_id':stock['warehouse_id']}).json()[0]['held']==0
+-- 
+2.50.1 (Apple Git-155)
+

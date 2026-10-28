@@ -80,6 +80,7 @@ def event(db, record, user, action, data, state):
 def editable_record(db, record):
     s = get_state(db,record['id'])
     locked = {'accepted','invoicing','invoiced','reserved','materials-reserved','dispatched','produced','released','rejected','recalled','published','superseded','submitted','won','lost','withdrawn','cancelled','vendor-confirmed','completed','awarded'}
+    if s['data'].get('authority_pending'):raise HTTPException(409,'Resolve the pending authority job before editing')
     if s['stage'] in locked or s['data'].get('withdrawal') or s['data'].get('schedule_amendments') or db.execute('SELECT 1 FROM ledger WHERE record_id=?', (record['id'],)).fetchone():
         raise HTTPException(409,'This record has operational commitments. Create a new revision/record or use an explicit adjustment.')
     if items(db,record['id'],'visit') and record['product']=='amc':
@@ -112,6 +113,9 @@ def resource(db, record, user, kind, raw, item_id=None, delete=False):
     if slug=='renew' and kind=='reminder_policy':permit(user,'owner','reviewer')
     if record['status']=='archived': raise HTTPException(409,'Restore the record before editing')
     existing = one_item(db,record['id'],item_id,kind) if item_id else None
+    from .authority_adapters import before_resource, visit_created
+    before_resource(db,record,user,kind,existing)
+    require(not state['data'].get('authority_pending'),'Resolve the pending authority job before editing')
     if existing and existing['data'].get('_outcome'):raise HTTPException(409,'Resolved cases are immutable; open a new case')
     if state['data'].get('withdrawal'):raise HTTPException(409,'Enrollment was withdrawn; use an explicit financial correction')
     if slug=='batch' and kind=='dispatch' and existing:
@@ -184,6 +188,7 @@ def resource(db, record, user, kind, raw, item_id=None, delete=False):
             terms=items(db,record['id'],'terms')
             require(terms and int(data['active_seats'])<=int(terms[0]['data']['seats']),'Verified active seats must fit the recorded contract seats')
         item_id = store_item(db,record['id'],kind,data,user,item_id)
+        if slug=='amc' and kind=='visit':visit_created(db,record,user,data,item_id,state)
         if slug=='batch' and kind=='dispatch':
             sku='finished:'+json.loads(record['payload'])['batch_number'];row=stock_row(db,user,sku);q=decimal(data['quantity'])
             require(decimal(row['quantity'])-decimal(row['held'])>=q,'Insufficient released output for this dispatch')
@@ -217,9 +222,10 @@ def schedule_visit(db, record, user, data, item_id):
     for row in rows:
         if row['id']==item_id: continue
         v=json.loads(row['data'])
+        if v.get('_status') in ('booking-cancelled','booking-no_show'):continue
         require(not(v['technician']==data['technician'] and v['start']<data['end'] and data['start']<v['end']), 'Technician is already scheduled during this time')
     if data['chargeable']=='No':
-        planned=sum(i['data']['chargeable']=='No' for i in items(db,record['id'],'visit') if i['id']!=item_id)
+        planned=sum(i['data']['chargeable']=='No' and i['data'].get('_status') not in ('booking-cancelled','booking-no_show') for i in items(db,record['id'],'visit') if i['id']!=item_id)
         require(planned+int(p['completed'])<int(p['included']),'All included visits are already allocated; mark an extra visit as chargeable')
 
 
@@ -394,7 +400,9 @@ def execute(db,record,user,action,raw):
         raise HTTPException(409,'Submitted evidence is immutable; create a new revision')
     from .workflow_extensions import execute as extended_execute, before_action, after_action
     before_action(db,record,user,action,data,s)
-    if extended_execute(db,record,user,action,data,s,result):pass
+    from .authority_adapters import execute as authority_execute
+    if authority_execute(db,record,user,action,data,s,result):pass
+    elif extended_execute(db,record,user,action,data,s,result):pass
     elif action=='ledger':
         result['entry_id']=post_ledger(db,record,user,data)
         result['document_id']=snapshot(db,record,user,'receipt',s,{'entry_id':result['entry_id']})

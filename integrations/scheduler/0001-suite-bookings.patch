@@ -1,0 +1,564 @@
+From c3973c0594d4568699ced72539b38603f4dbb6d6 Mon Sep 17 00:00:00 2001
+From: r2st <102911930+r2st@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 22:23:19 +0530
+Subject: [PATCH] Add authoritative Suite bookings and shared conflict guards
+
+---
+ backend/app/main.py                   |   3 +-
+ backend/app/models/__init__.py        |   2 +
+ backend/app/models/suite_booking.py   |  14 +++
+ backend/app/routers/bookings.py       |   6 +
+ backend/app/routers/public.py         |   8 ++
+ backend/app/routers/suite.py          | 152 ++++++++++++++++++++++++++
+ backend/app/services/booking_guard.py |  53 +++++++++
+ backend/app/services/scheduling.py    |   2 +-
+ backend/scripts/migrate_suite.py      |  37 +++++++
+ backend/tests/test_suite.py           | 115 +++++++++++++++++++
+ 10 files changed, 390 insertions(+), 2 deletions(-)
+ create mode 100644 backend/app/models/suite_booking.py
+ create mode 100644 backend/app/routers/suite.py
+ create mode 100644 backend/app/services/booking_guard.py
+ create mode 100644 backend/scripts/migrate_suite.py
+ create mode 100644 backend/tests/test_suite.py
+
+diff --git a/backend/app/main.py b/backend/app/main.py
+index c9791ce..3ab23a9 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -11,7 +11,7 @@ from fastapi.middleware.gzip import GZipMiddleware
+ import app.models  # noqa: F401
+ from app.core.config import settings
+ from app.core.database import check_database, engine
+-from app.routers import auth, availability, bookings, calendar, health, meeting_types, notifications, public, team, tools
++from app.routers import auth, availability, bookings, calendar, health, meeting_types, notifications, public, team, tools, suite
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
+     application.include_router(auth.router, prefix=prefix)
+     application.include_router(meeting_types.router, prefix=prefix)
+     application.include_router(bookings.router, prefix=prefix)
++    application.include_router(suite.router, prefix=prefix)
+     application.include_router(availability.router, prefix=prefix)
+     application.include_router(calendar.router, prefix=prefix)
+     application.include_router(public.router, prefix=prefix)
+diff --git a/backend/app/models/__init__.py b/backend/app/models/__init__.py
+index e06a139..5146af4 100644
+--- a/backend/app/models/__init__.py
++++ b/backend/app/models/__init__.py
+@@ -6,3 +6,5 @@ import app.models.meeting_type  # noqa: F401
+ import app.models.notification  # noqa: F401
+ import app.models.usage_tracking  # noqa: F401
+ import app.models.user  # noqa: F401
++
++import app.models.suite_booking
+diff --git a/backend/app/models/suite_booking.py b/backend/app/models/suite_booking.py
+new file mode 100644
+index 0000000..4e06bed
+--- /dev/null
++++ b/backend/app/models/suite_booking.py
+@@ -0,0 +1,14 @@
++from sqlalchemy import ForeignKey, String, UniqueConstraint, JSON
++from sqlalchemy.orm import Mapped, mapped_column
++from app.core.database import Base
++from app.models.mixins import BusinessScopedMixin, TimestampMixin
++
++
++class SuiteBooking(Base, BusinessScopedMixin, TimestampMixin):
++    __tablename__ = 'suite_bookings'
++    __table_args__ = (UniqueConstraint('business_id', 'reference', name='uq_suite_booking_reference'),)
++    id: Mapped[int] = mapped_column(primary_key=True)
++    reference: Mapped[str] = mapped_column(String(160))
++    fingerprint: Mapped[str] = mapped_column(String(64))
++    booking_id: Mapped[int | None] = mapped_column(ForeignKey('bookings.id', ondelete='SET NULL'), nullable=True)
++    commands: Mapped[dict] = mapped_column(JSON, default=dict)
+diff --git a/backend/app/routers/bookings.py b/backend/app/routers/bookings.py
+index 62d0dda..01f0807 100644
+--- a/backend/app/routers/bookings.py
++++ b/backend/app/routers/bookings.py
+@@ -15,6 +15,7 @@ from app.models.user import User
+ from app.schemas.booking import BookingCreate, BookingOut, BookingUpdate
+ from app.services.email import send_booking_confirmation
+ from app.services.scheduling import generate_token
++from app.services.booking_guard import lock_calendar, check_slot, ACTIVE
+ from app.services.usage import check_limit, increment_usage
+ 
+ router = APIRouter(prefix="/bookings", tags=["bookings"])
+@@ -40,6 +41,7 @@ def create_booking(
+     user: User = Depends(get_current_user),
+     db: Session = Depends(get_db),
+ ) -> BookingOut:
++    lock_calendar(db, user.business_id)
+     mt = db.execute(
+         select(MeetingType).where(
+             MeetingType.id == body.meeting_type_id,
+@@ -56,6 +58,7 @@ def create_booking(
+ 
+     end_time = body.start_time + timedelta(minutes=mt.duration_minutes)
+ 
++    check_slot(db, mt, user, body.start_time, end_time)
+     booking = Booking(
+         business_id=user.business_id,
+         meeting_type_id=mt.id,
+@@ -113,6 +116,7 @@ def update_booking(
+     user: User = Depends(get_current_user),
+     db: Session = Depends(get_db),
+ ) -> BookingOut:
++    lock_calendar(db, user.business_id)
+     booking = db.execute(
+         select(Booking).where(
+             Booking.id == booking_id,
+@@ -122,6 +126,8 @@ def update_booking(
+     if not booking:
+         raise HTTPException(status_code=404, detail="Booking not found")
+ 
++    if body.status in ACTIVE:
++        check_slot(db, db.get(MeetingType, booking.meeting_type_id), db.get(User, booking.host_user_id), booking.start_time, booking.end_time, exclude=booking.id)
+     updates = body.model_dump(exclude_unset=True)
+     for key, value in updates.items():
+         setattr(booking, key, value)
+diff --git a/backend/app/routers/public.py b/backend/app/routers/public.py
+index c0609fb..20e208f 100644
+--- a/backend/app/routers/public.py
++++ b/backend/app/routers/public.py
+@@ -16,6 +16,7 @@ from app.schemas.booking import BookingOut
+ from app.services.email import send_booking_cancelled, send_booking_confirmation
+ from app.services.scheduling import generate_token, get_available_slots
+ from app.services.usage import check_limit, increment_usage
++from app.services.booking_guard import lock_calendar, check_slot, ACTIVE
+ 
+ router = APIRouter(prefix="/book", tags=["public"])
+ 
+@@ -36,6 +37,7 @@ def cancel_by_token(token: str, db: Session = Depends(get_db)) -> dict:
+     ).scalar_one_or_none()
+     if not booking:
+         raise HTTPException(status_code=404, detail="Booking not found")
++    lock_calendar(db, booking.business_id)
+     if booking.status == BookingStatus.CANCELLED:
+         return {"status": "already_cancelled"}
+ 
+@@ -69,7 +71,11 @@ def reschedule_by_token(
+     mt = db.execute(
+         select(MeetingType).where(MeetingType.id == booking.meeting_type_id)
+     ).scalar_one_or_none()
++    lock_calendar(db, booking.business_id)
++    if booking.status not in ACTIVE:
++        raise HTTPException(409, "Closed booking cannot be rescheduled")
+     duration = mt.duration_minutes if mt else 30
++    check_slot(db, mt, db.get(User, booking.host_user_id), body.new_start_time, body.new_start_time + timedelta(minutes=duration), exclude=booking.id)
+ 
+     booking.start_time = body.new_start_time
+     booking.end_time = body.new_start_time + timedelta(minutes=duration)
+@@ -168,6 +174,7 @@ def create_public_booking(
+     if not mt:
+         raise HTTPException(status_code=404, detail="Meeting type not found")
+ 
++    lock_calendar(db, business.id)
+     allowed, count, limit = check_limit(db, business.id, business.plan)
+     if not allowed:
+         raise HTTPException(status_code=429, detail="This business has reached its meeting limit")
+@@ -178,6 +185,7 @@ def create_public_booking(
+ 
+     end_time = body.start_time + timedelta(minutes=mt.duration_minutes)
+ 
++    check_slot(db, mt, host, body.start_time, end_time)
+     booking = Booking(
+         business_id=business.id,
+         meeting_type_id=mt.id,
+diff --git a/backend/app/routers/suite.py b/backend/app/routers/suite.py
+new file mode 100644
+index 0000000..6bb28d4
+--- /dev/null
++++ b/backend/app/routers/suite.py
+@@ -0,0 +1,152 @@
++"""Suite commands commit here; they never send email or expose guest access tokens."""
++import hashlib
++import json
++from datetime import timedelta
++from typing import Literal
++from fastapi import APIRouter, Depends, HTTPException, Header
++from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, EmailStr
++from sqlalchemy.orm import Session
++from app.core.database import get_db
++from app.core.deps import get_current_user
++from app.models.booking import Booking, BookingStatus
++from app.models.business import Business
++from app.models.meeting_type import MeetingType
++from app.models.user import User, UserRole
++from app.models.suite_booking import SuiteBooking
++from app.services.booking_guard import lock_calendar, check_slot, utc
++from app.services.usage import check_limit, increment_usage
++
++def expected_business(expected: int | None = Header(None, alias='X-DoAide-Business-ID'), user: User = Depends(get_current_user)):
++    if expected is not None and expected != user.business_id:
++        raise HTTPException(403, 'Connection credential belongs to a different business')
++
++
++router = APIRouter(prefix='/suite/bookings', tags=['suite'], dependencies=[Depends(expected_business)])
++
++
++class Appointment(BaseModel):
++    model_config = ConfigDict(extra='forbid')
++    reference: str = Field(min_length=1, max_length=160, pattern=r'^[A-Za-z0-9:_-]+$')
++    meeting_type_id: int = Field(gt=0)
++    host_email: EmailStr
++    start_time: AwareDatetime
++    end_time: AwareDatetime
++    guest_name: str = Field(min_length=1, max_length=255)
++    guest_email: EmailStr
++
++
++class Change(BaseModel):
++    model_config = ConfigDict(extra='forbid')
++    command: Literal['cancel', 'reschedule', 'reconcile']
++    start_time: AwareDatetime | None = None
++    end_time: AwareDatetime | None = None
++
++
++def authorized(user, db):
++    business = db.get(Business, user.business_id)
++    if not business or not business.is_active or user.role not in (UserRole.OWNER, UserRole.ADMIN):
++        raise HTTPException(403, 'Active business owner or administrator required')
++
++
++def fingerprint(body):
++    return hashlib.sha256(json.dumps(body.model_dump(mode='json'), sort_keys=True).encode()).hexdigest()
++
++
++def find(db, user, reference):
++    row = db.query(SuiteBooking).filter_by(business_id=user.business_id, reference=reference).first()
++    if not row:
++        raise HTTPException(404, 'Booking reference not found')
++    if row.booking_id is None and row.fingerprint != 'missing':
++        raise HTTPException(410, 'Booking was deleted; this reference cannot be reused')
++    return row
++
++
++def result(db, row):
++    if row.booking_id is None and row.fingerprint=='missing':
++        return {'business_id':row.business_id,'reference':row.reference,'status':'missing'}
++    if row.booking_id is None:
++        raise HTTPException(410, 'Booking was deleted; this reference cannot be reused')
++    booking = db.get(Booking, row.booking_id)
++    host = db.get(User, booking.host_user_id)
++    return {'business_id': row.business_id, 'reference': row.reference, 'booking_id': booking.id, 'status': booking.status.value,
++            'host_email': host.email, 'start_time': utc(booking.start_time).isoformat(),
++            'end_time': utc(booking.end_time).isoformat(), 'notifications_sent': False}
++
++
++@router.get('/{reference}')
++def lookup(reference: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
++    authorized(user, db)
++    return result(db, find(db, user, reference))
++
++
++@router.post('')
++def create(body: Appointment, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
++    authorized(user, db)
++    lock_calendar(db, user.business_id)
++    prior = db.query(SuiteBooking).filter_by(business_id=user.business_id, reference=body.reference).first()
++    if prior:
++        if prior.fingerprint != fingerprint(body):
++            raise HTTPException(409, 'Reference already used with different contents')
++        return result(db, prior)
++    host = db.query(User).filter_by(email=str(body.host_email).lower(), business_id=user.business_id, is_active=True).first()
++    mt = db.query(MeetingType).filter_by(id=body.meeting_type_id, business_id=user.business_id, is_active=True).first()
++    if not host or not mt:
++        raise HTTPException(404, 'Active host or meeting type not found in this business')
++    if body.end_time - body.start_time != timedelta(minutes=mt.duration_minutes):
++        raise HTTPException(422, 'Appointment duration must equal the meeting type duration')
++    check_slot(db, mt, host, body.start_time, body.end_time, require_availability=True)
++    business = db.get(Business, user.business_id)
++    if not check_limit(db, user.business_id, business.plan)[0]:
++        raise HTTPException(429, 'Monthly meeting limit reached')
++    booking = Booking(business_id=user.business_id, meeting_type_id=mt.id, host_user_id=host.id,
++        guest_name=body.guest_name, guest_email=str(body.guest_email), guest_timezone='UTC',
++        start_time=utc(body.start_time), end_time=utc(body.end_time),
++        status=BookingStatus.PENDING if mt.requires_confirmation else BookingStatus.CONFIRMED,
++        notes='DoAide Suite reference: ' + body.reference)
++    db.add(booking)
++    db.flush()
++    row = SuiteBooking(business_id=user.business_id, reference=body.reference, fingerprint=fingerprint(body), booking_id=booking.id)
++    db.add(row)
++    increment_usage(db, user.business_id)
++    db.commit()
++    return result(db, row)
++
++
++@router.post('/{reference}')
++def change(reference: str, body: Change, idempotency_key: str = Header(min_length=1, max_length=160),
++           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
++    authorized(user, db)
++    lock_calendar(db, user.business_id)
++    if body.command == 'reconcile':
++        row=db.query(SuiteBooking).filter_by(business_id=user.business_id,reference=reference).first()
++        if not row:
++            if len(reference)>160 or not __import__('re').fullmatch(r'[A-Za-z0-9:_-]+',reference):raise HTTPException(422,'Invalid reference')
++            row=SuiteBooking(business_id=user.business_id,reference=reference,fingerprint='missing',booking_id=None,commands={})
++            db.add(row)
++        db.commit()
++        return result(db,row)
++    row = find(db, user, reference)
++    if row.booking_id is None:raise HTTPException(410,'Reconciled reference cannot be reused')
++    previous = row.commands.get(idempotency_key)
++    if previous:
++        if previous != fingerprint(body):
++            raise HTTPException(409, 'Command key already used with different contents')
++        return result(db, row)
++    booking = db.get(Booking, row.booking_id)
++    if body.command == 'cancel':
++        if booking.status in (BookingStatus.COMPLETED, BookingStatus.NO_SHOW):
++            raise HTTPException(409, 'Completed appointment cannot be cancelled')
++        booking.status = BookingStatus.CANCELLED
++    else:
++        if booking.status not in (BookingStatus.CONFIRMED, BookingStatus.PENDING, BookingStatus.RESCHEDULED):
++            raise HTTPException(409, 'Closed appointment cannot be rescheduled')
++        mt = db.get(MeetingType, booking.meeting_type_id)
++        host = db.get(User, booking.host_user_id)
++        if not body.start_time or not body.end_time or body.end_time - body.start_time != timedelta(minutes=mt.duration_minutes):
++            raise HTTPException(422, 'Provide the start and end with the meeting type duration')
++        check_slot(db, mt, host, body.start_time, body.end_time, exclude=booking.id, require_availability=True)
++        booking.start_time, booking.end_time = utc(body.start_time), utc(body.end_time)
++        booking.status = BookingStatus.PENDING if mt.requires_confirmation else BookingStatus.RESCHEDULED
++    row.commands = {**row.commands, idempotency_key: fingerprint(body)}
++    db.commit()
++    return result(db, row)
+diff --git a/backend/app/services/booking_guard.py b/backend/app/services/booking_guard.py
+new file mode 100644
+index 0000000..7e5e018
+--- /dev/null
++++ b/backend/app/services/booking_guard.py
+@@ -0,0 +1,53 @@
++"""Serialize appointment changes across native and Suite entry points."""
++from datetime import datetime, timedelta, timezone
++from zoneinfo import ZoneInfo
++from fastapi import HTTPException
++from sqlalchemy import select, update
++from app.models.business import Business
++from app.models.booking import Booking, BookingStatus
++from app.models.meeting_type import MeetingType
++from app.models.availability_rule import AvailabilityRule
++
++ACTIVE = (BookingStatus.CONFIRMED, BookingStatus.PENDING, BookingStatus.RESCHEDULED)
++
++
++def utc(value):
++    # Historical native routes accepted naive UTC datetimes.
++    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
++
++
++def lock_calendar(db, business_id):
++    db.execute(update(Business).where(Business.id == business_id).values(id=Business.id))
++    db.expire_all()
++
++
++def check_slot(db, mt, host, start, end, exclude=None, require_availability=False):
++    start, end = utc(start), utc(end)
++    if start >= end:
++        raise HTTPException(422, 'Booking must end after it starts')
++    rows = db.execute(select(Booking).where(Booking.business_id == host.business_id,
++        Booking.host_user_id == host.id, Booking.status.in_(ACTIVE))).scalars().all()
++    count = 0
++    local_start = start.astimezone(ZoneInfo(host.timezone))
++    for row in rows:
++        if row.id == exclude:
++            continue
++        previous = db.get(MeetingType, row.meeting_type_id)
++        before = previous.buffer_before_minutes if previous else 0
++        after = previous.buffer_after_minutes if previous else 0
++        if start - timedelta(minutes=mt.buffer_before_minutes) < utc(row.end_time) + timedelta(minutes=after) and end + timedelta(minutes=mt.buffer_after_minutes) > utc(row.start_time) - timedelta(minutes=before):
++            raise HTTPException(409, 'Host already has an appointment during this time or buffer')
++        if utc(row.start_time).astimezone(ZoneInfo(host.timezone)).date() == local_start.date():
++            count += 1
++    if mt.max_per_day and count >= mt.max_per_day:
++        raise HTTPException(409, 'Daily appointment limit reached')
++    if require_availability:
++        if start <= datetime.now(timezone.utc):
++            raise HTTPException(422, 'Appointment must start in the future')
++        local_end = end.astimezone(ZoneInfo(host.timezone))
++        rules = db.execute(select(AvailabilityRule).where(AvailabilityRule.business_id == host.business_id,
++            AvailabilityRule.user_id == host.id, AvailabilityRule.day_of_week == local_start.weekday(),
++            AvailabilityRule.is_active.is_(True))).scalars().all()
++        if local_start.date() != local_end.date() or not any(
++            rule.start_time <= local_start.strftime('%H:%M') and local_end.strftime('%H:%M:%S') <= rule.end_time + ':00' for rule in rules):
++            raise HTTPException(409, 'Requested time is outside the host availability rules')
+diff --git a/backend/app/services/scheduling.py b/backend/app/services/scheduling.py
+index 25f1eac..504fa0b 100644
+--- a/backend/app/services/scheduling.py
++++ b/backend/app/services/scheduling.py
+@@ -37,7 +37,7 @@ def get_available_slots(
+                 Booking.host_user_id == user_id,
+                 Booking.start_time >= date.replace(hour=0, minute=0, second=0),
+                 Booking.start_time < date.replace(hour=0, minute=0, second=0) + timedelta(days=1),
+-                Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.PENDING]),
++                Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.PENDING, BookingStatus.RESCHEDULED]),
+             )
+         )
+     ).scalars().all()
+diff --git a/backend/scripts/migrate_suite.py b/backend/scripts/migrate_suite.py
+new file mode 100644
+index 0000000..98fd518
+--- /dev/null
++++ b/backend/scripts/migrate_suite.py
+@@ -0,0 +1,37 @@
++"""Add only the Suite authority table; preserve the initialized service schema."""
++import json
++import os
++from pathlib import Path
++import sys
++sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
++from sqlalchemy import inspect
++import app.models
++from app.core.database import engine
++from app.models.suite_booking import SuiteBooking
++
++
++def migrate(target):
++    table=SuiteBooking.__table__
++    with target.begin() as connection:
++        inspector=inspect(connection)
++        if not all(inspector.has_table(name) for name in ('businesses', 'bookings')):
++            raise ValueError('Initialize the existing Scheduler schema first')
++        existed=inspector.has_table(table.name)
++        table.create(connection,checkfirst=True)
++        inspector=inspect(connection)
++        columns={value['name']:value for value in inspector.get_columns(table.name)}
++        if set(columns)!={column.name for column in table.columns}:
++            raise ValueError('Existing Suite authority table is incompatible')
++        unique={tuple(value['column_names']) for value in inspector.get_unique_constraints(table.name)}
++        if ('business_id','reference') not in unique:
++            raise ValueError('Business/reference uniqueness is missing')
++        keys=inspector.get_foreign_keys(table.name)
++        if not columns['booking_id']['nullable'] or not any(key['constrained_columns']==['booking_id'] and key.get('options',{}).get('ondelete','').upper()=='SET NULL' for key in keys):
++            raise ValueError('Booking deletion must retain a reference tombstone')
++    return {'migration':table.name+'-v1','created':not existed,'verified':True}
++
++
++if __name__=='__main__':
++    if not os.environ.get('DATABASE_URL'):
++        raise SystemExit('Set DATABASE_URL explicitly to the intended test/deployment database')
++    print(json.dumps(migrate(engine),indent=2))
+diff --git a/backend/tests/test_suite.py b/backend/tests/test_suite.py
+new file mode 100644
+index 0000000..d44f027
+--- /dev/null
++++ b/backend/tests/test_suite.py
+@@ -0,0 +1,115 @@
++from datetime import datetime, timedelta, timezone
++from concurrent.futures import ThreadPoolExecutor
++from threading import Barrier
++from fastapi import HTTPException
++from sqlalchemy import create_engine
++from sqlalchemy.orm import Session
++from app.core.database import Base
++from app.models.booking import Booking
++from app.models.suite_booking import SuiteBooking
++from app.models.business import Business
++from app.models.user import User
++from app.models.meeting_type import MeetingType
++from app.models.availability_rule import AvailabilityRule
++from app.routers.suite import create, Appointment
++
++
++def setup(c,h):
++    mt=c.post('/api/v1/meeting-types/',headers=h,json={'name':'Visit','duration_minutes':30,'buffer_after_minutes':15}).json()
++    start=(datetime.now(timezone.utc)+timedelta(days=2)).replace(hour=10,minute=0,second=0,microsecond=0)
++    r=c.post('/api/v1/availability/',headers=h,json={'day_of_week':start.weekday(),'start_time':'09:00','end_time':'17:00'})
++    assert r.status_code==201,r.text
++    return {'reference':'suite-visit-1','meeting_type_id':mt['id'],'host_email':'test@example.com',
++        'guest_name':'Customer','guest_email':'customer@example.com','start_time':start.isoformat(),'end_time':(start+timedelta(minutes=30)).isoformat()}
++
++
++def test_retry_and_native_conflict(client,auth_headers,db_session,monkeypatch):
++    b=setup(client,auth_headers)
++    def forbidden(**kwargs):raise AssertionError('Suite must not send notifications')
++    monkeypatch.setattr('app.routers.bookings.send_booking_confirmation',forbidden)
++    r=client.post('/api/v1/suite/bookings',headers=auth_headers,json=b)
++    assert r.status_code==200,r.text
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=b).json()==r.json()
++    assert 'cancel_token' not in r.json() and not r.json()['notifications_sent']
++    assert db_session.query(Booking).count()==1
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json={**b,'reference':'suite-visit-2'}).status_code==409
++    native={k:b[k] for k in ('meeting_type_id','start_time','guest_name','guest_email')}
++    assert client.post('/api/v1/bookings/',headers=auth_headers,json=native).status_code==409
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json={**b,'guest_name':'Changed'}).status_code==409
++
++
++def test_cancel_reschedule_replay_and_tombstone(client,auth_headers,db_session):
++    b=setup(client,auth_headers);assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=b).status_code==200
++    url='/api/v1/suite/bookings/'+b['reference'];h={**auth_headers,'Idempotency-Key':'move-1'}
++    body={'command':'reschedule','start_time':b['start_time'].replace('10:00','11:00'),'end_time':b['end_time'].replace('10:30','11:30')}
++    assert client.post(url,headers=h,json=body).json()['status']=='rescheduled'
++    assert client.post(url,headers=h,json=body).json()['start_time']==body['start_time']
++    assert client.post(url,headers=h,json={'command':'cancel'}).status_code==409
++    assert client.post(url,headers={**h,'Idempotency-Key':'cancel-1'},json={'command':'cancel'}).json()['status']=='cancelled'
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=b).json()['status']=='cancelled'
++    booking=db_session.query(Booking).one();db_session.delete(booking);db_session.commit();db_session.expire_all()
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=b).status_code==410
++
++
++def test_availability_duration_business_and_roles(client,auth_headers,db_session):
++    b=setup(client,auth_headers)
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json={**b,'end_time':b['start_time']}).status_code==422
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json={**b,'start_time':b['start_time'].replace('10:00','18:00'),'end_time':b['end_time'].replace('10:30','18:30')}).status_code==409
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json={**b,'host_email':'missing@example.com'}).status_code==404
++    from app.models.user import UserRole
++    u=db_session.query(User).one();u.role=UserRole.MEMBER;db_session.commit()
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=b).status_code==403
++
++
++def test_concurrent_bookings_cannot_double_book(tmp_path):
++    engine=create_engine('sqlite:///'+str(tmp_path/'race.db'),connect_args={'check_same_thread':False,'timeout':10})
++    Base.metadata.create_all(engine)
++    start=(datetime.now(timezone.utc)+timedelta(days=2)).replace(hour=10,minute=0,second=0,microsecond=0)
++    with Session(engine) as db:
++        business=Business(name='Race',slug='race');db.add(business);db.flush()
++        user=User(business_id=business.id,email='host@example.com',hashed_password='test');mt=MeetingType(business_id=business.id,name='Visit',slug='visit',duration_minutes=30)
++        db.add_all([user,mt]);db.flush();ids=(user.id,mt.id)
++        db.add(AvailabilityRule(business_id=business.id,user_id=user.id,day_of_week=start.weekday(),start_time='09:00',end_time='17:00'));db.commit()
++    barrier=Barrier(2)
++    def run(index):
++        with Session(engine) as db:
++            user=db.get(User,ids[0]);body=Appointment(reference='race-'+str(index),meeting_type_id=ids[1],host_email='host@example.com',guest_name='Customer',guest_email='c@example.com',start_time=start,end_time=start+timedelta(minutes=30))
++            barrier.wait()
++            try:create(body,user,db);return 200
++            except HTTPException as exc:db.rollback();return exc.status_code
++    with ThreadPoolExecutor(2) as pool:assert sorted(pool.map(run,[1,2]))==[200,409]
++    with Session(engine) as db:assert db.query(Booking).count()==1
++
++
++def test_additive_migration_preserves_schema_and_is_repeatable(tmp_path):
++    from scripts.migrate_suite import migrate
++    engine=create_engine('sqlite:///'+str(tmp_path/'migrate.db'))
++    tables=[table for table in Base.metadata.sorted_tables if not table.name.startswith('suite_')]
++    Base.metadata.create_all(engine,tables=tables)
++    with Session(engine) as db:
++        db.add(Business(name='Preserved',slug='preserved'))
++        db.commit()
++    assert migrate(engine)['created']
++    assert not migrate(engine)['created']
++    with Session(engine) as db:assert db.query(Business).one().name=='Preserved'
++
++
++def test_business_fence_and_public_conflict(client,auth_headers,db_session):
++    body=setup(client,auth_headers)
++    assert client.post('/api/v1/suite/bookings',headers={**auth_headers,'X-DoAide-Business-ID':'999'},json=body).status_code==403
++    assert db_session.query(Booking).count()==0
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=body).status_code==200
++    mt=db_session.query(MeetingType).one();business=db_session.query(Business).one()
++    native={k:body[k] for k in ('start_time','guest_name','guest_email')}
++    assert client.post('/api/v1/book/'+business.slug+'/'+mt.slug,json=native).status_code==409
++    from app.models.usage_tracking import UsageTracking
++    assert db_session.query(UsageTracking).one().meetings_count==1
++
++
++def test_missing_reconciliation_fences_a_late_booking(client,auth_headers,db_session):
++    body=setup(client,auth_headers)
++    r=client.post('/api/v1/suite/bookings/'+body['reference'],headers={**auth_headers,'Idempotency-Key':'reconcile-1'},json={'command':'reconcile'})
++    assert r.status_code==200 and r.json()['status']=='missing'
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json=body).status_code==409
++    assert db_session.query(Booking).count()==0
++    assert client.post('/api/v1/suite/bookings',headers=auth_headers,json={**body,'reference':'new-confirmed-attempt'}).status_code==200
+-- 
+2.50.1 (Apple Git-155)
+

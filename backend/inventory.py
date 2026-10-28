@@ -45,6 +45,7 @@ def install_inventory(app,path,current_user):
             op.require(quantity>=0,'Correction cannot create negative stock')
             import json
             metadata=json.loads(stock['data'])
+            op.require(not metadata.get('_inventory'),'Adjust this balance in DoAide Inventory, then refresh the catalogue')
             if metadata.get('quality') in ('Quarantined','Rejected','Recalled'):
                 # Correcting quarantined physical stock never releases it for use.
                 op.require(held==decimal(stock['quantity']),'Quality hold needs reconciliation before correction')

@@ -11,6 +11,16 @@ def extend(specs, resource, action, text, day, email, ref, file, review):
         specs[product]['resources'].update(values)
     def optional(field): return {**field, 'required': False}
     reason = text('reason', 'Reason and source')
+    fields('amc','visit',[I('meeting_type_id','Scheduler meeting type ID',min=1,required=False),email('customer_email','Customer email for Scheduler',required=False)])
+    actions('amc',{
+        'connect_scheduler':action('Activate connected Scheduler for new visits',[],['owner']),
+        'scheduler_retry':action('Retry a missing Scheduler booking',[ref('item_id','Visit','visit')],review),
+        'scheduler_refresh':action('Refresh Scheduler booking',[ref('item_id','Visit','visit')]),
+        'scheduler_cancel':action('Cancel Scheduler booking',[ref('item_id','Visit','visit')],review),
+        'scheduler_reschedule':action('Reschedule through Scheduler',[ref('item_id','Visit','visit'),F('start','New start · ISO with offset'),F('end','New end · ISO with offset')],review)})
+    actions('orderdesk',{
+        'inventory_refresh':action('Refresh connected Inventory catalogue',[],review),
+        'inventory_status':action('Reconcile Inventory reservation')})
     fields('collect', 'promise', [N('amount','Promised / disputed amount · INR', required=False), email('owner','Responsible owner',required=False), text('next_action','Next action',required=False), file(required=False)])
     resources('collect', {'cadence':resource('Reminder sequence and contact limits',[
         email('recipient','Customer email'), F('days','Days after invoice due date · comma separated'),

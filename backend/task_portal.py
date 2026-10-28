@@ -56,6 +56,8 @@ def install_task_portal(app,path,current_user):
             db.execute('BEGIN IMMEDIATE');link,r,i=access(db,token)
             op.require(r['product']=='amc' and email.strip().lower()==link['recipient'],'Use the assigned technician email')
             op.require(i['data']['start']<=op.now(),'Cannot start a future visit')
+            from .authority_adapters import require_current_booking
+            require_current_booking(i['data'])
             if i['data'].get('_started_at'):return {'started_at':i['data']['_started_at']}
             from .commercial import admit
             workspace=db.execute('SELECT workspace_id FROM record_workspaces WHERE record_id=?',(r['id'],)).fetchone()[0]
@@ -79,6 +81,8 @@ def install_task_portal(app,path,current_user):
             identifier=op.uid();db.execute('INSERT INTO files VALUES (?,?,?,?,?,?,?,?,?,?,?)',(identifier,r['id'],metadata['name'],metadata['mime'],metadata['size'],metadata['checksum'],content,metadata['extracted'],metadata['extraction_status'],'external:'+email.lower(),op.now()))
             register_file_controls(db,identifier,metadata['scan_status'])
             if r['product']=='amc':
+                from .authority_adapters import require_current_booking
+                require_current_booking(i['data'])
                 op.require(i['data']['start']<=op.now(),'Cannot complete a future visit')
                 try:values=json.loads(readings)
                 except ValueError:op.fail('Readings must be a JSON object')

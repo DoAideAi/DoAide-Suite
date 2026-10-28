@@ -35,7 +35,7 @@ def erase(path,workspace,policy,execute=False,confirmation=None):
         db.execute('DELETE FROM shares WHERE document_id IN ('+documents+')',(workspace,))
         for table in ('public_document_blobs','document_blobs'):db.execute('DELETE FROM '+table+' WHERE document_id IN ('+documents+')',(workspace,))
         db.execute('DELETE FROM ledger_evidence WHERE entry_id IN ('+entries+')',(workspace,))
-        for table in ('stock_adjustments','stock_movements','stock','billing_events','billing_accounts','jobs','idempotency','imports','invitations','ledger'):
+        for table in ('portfolio_authorities','stock_adjustments','stock_movements','stock','billing_events','billing_accounts','jobs','idempotency','imports','invitations','ledger'):
             db.execute('DELETE FROM '+table+' WHERE workspace_id=?',(workspace,))
         db.execute('DELETE FROM file_controls WHERE file_id IN ('+files+')',(workspace,))
         for table in ('task_links','files','documents','operation_events','operation_items','operations','audit_events'):

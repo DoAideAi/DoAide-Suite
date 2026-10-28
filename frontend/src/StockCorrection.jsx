@@ -3,7 +3,7 @@ import {api,post} from './client';
 
 export function StockCorrection({record,workflow,onSaved}){
   const [stock,setStock]=useState([]),[sku,setSku]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
-  const load=()=>api('/inventory').then(setStock).catch(e=>setError(e.message));
+  const load=()=>api('/inventory').then(rows=>setStock(rows.filter(s=>!s.data?._inventory))).catch(e=>setError(e.message));
   useEffect(()=>{load();},[record.id]);
   const selected=stock.find(s=>s.sku===sku);
   async function submit(e){e.preventDefault();setBusy(true);setError('');setMessage('');const form=e.currentTarget,f=new FormData(form);try{

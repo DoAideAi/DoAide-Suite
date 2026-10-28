@@ -43,6 +43,9 @@ def claim(path=None):
 
 def deliver(job,path=None,transport=None):
     data=job['data'];kind=job['kind']
+    if kind in ('inventory-command','scheduler-command'):
+        from .authority_adapters import deliver as authority_deliver
+        return authority_deliver(job,path,transport)
     if kind=='contracts-import':
         from .portfolio_connections import import_contract
         return import_contract(job,path,transport)
@@ -152,6 +155,17 @@ def run_once(path=None,transport=None):
         db.execute('BEGIN IMMEDIATE')
         applied=db.execute("UPDATE jobs SET state=?,data=?,due_at=?,lease_until=NULL,last_error=?,updated_at=? WHERE id=? AND state='running' AND attempts=?",(state,dump({**job['data'],'result':result}),due,error,now(),job['id'],job['attempts'])).rowcount
         if not applied:return {'id':job['id'],'state':'superseded','error':'Worker lease no longer owns this job'}
+        if state=='delivered' and job['kind'] in ('inventory-command','scheduler-command'):
+            from .authority_adapters import complete
+            db.execute('SAVEPOINT authority_result')
+            try:
+                complete(db,job,result)
+                db.execute('RELEASE SAVEPOINT authority_result')
+            except Exception:
+                db.execute('ROLLBACK TO SAVEPOINT authority_result')
+                db.execute('RELEASE SAVEPOINT authority_result')
+                state='blocked';error='Authority result failed validation; reconcile before retrying'
+                db.execute("UPDATE jobs SET state='blocked',last_error=? WHERE id=?",(error,job['id']))
         if state=='delivered' and job['kind']=='invoice':
             record=dict(db.execute('SELECT * FROM records WHERE id=?',(job['record_id'],)).fetchone());workflow=get_state(db,record['id'])
             workflow['data'].setdefault('external_invoices',{})[job['data']['document_id']]=result['invoice_id']

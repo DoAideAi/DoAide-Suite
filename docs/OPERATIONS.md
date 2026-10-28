@@ -129,3 +129,7 @@ Only an explicit repeat with `--execute --confirm-workspace WORKSPACE_ID` erases
 The API bounds request bodies before parsing and keeps rate counters in SQLite across processes. Defaults are 600 API and 120 public-link/webhook requests per minute per client IP. Configure limits for your traffic. Forwarded headers are not trusted by the middleware; configure Uvicorn's trusted proxy addresses deliberately so legitimate clients do not share a proxy's bucket. Do not expose diagnostic or administration endpoints through a public bypass.
 
 `uv run python scripts/check_documents.py` creates synthetic PDF fixtures through actual API workflows. Render and review them after layout changes. GitHub Actions runs locked dependency setup, tests, frontend build/audit and isolated container checks; it does not deploy.
+
+## v0.5 authoritative services
+
+Use [AUTHORITATIVE_CONNECTIONS.md](AUTHORITATIVE_CONNECTIONS.md) to install the Inventory/Scheduler service patches and additive migrations, configure workspace-scoped credentials/business IDs, activate ownership and recover rejected/ambiguous commands. Suite schema 5 only adds durable authority mappings; local stock and visits remain local until explicit activation. Back up before updating the API and worker together. Preserve service reference/tombstone tables during rollback.

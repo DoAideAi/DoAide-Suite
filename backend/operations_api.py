@@ -402,7 +402,10 @@ def install_operations(app,db_path,current_user):
     @app.get('/api/integrations')
     def integrations(user=Depends(current_user)):
         import shutil
-        return {'delivery_mode':os.environ.get('DOAIDE_DELIVERY_MODE','disabled'),'email':bool(os.environ.get('DOAIDE_SMTP_HOST')),'payments':bool(os.environ.get('RAZORPAY_KEY_ID') and os.environ.get('RAZORPAY_KEY_SECRET') and os.environ.get('RAZORPAY_WEBHOOK_SECRET')),'invoice_adapter':bool(os.environ.get('DOAIDE_INVOICE_ADAPTER_URL')),'ocr':bool(shutil.which('tesseract') and shutil.which('pdftoppm'))}
+        from .authority_adapters import authority,configured
+        with transaction() as db:
+            connections={service.lower():{'configured':configured(service,user['workspace_id']),'active':bool(authority(db,service,user['workspace_id']))} for service in ('INVENTORY','SCHEDULER')}
+        return {'authorities':connections,'delivery_mode':os.environ.get('DOAIDE_DELIVERY_MODE','disabled'),'email':bool(os.environ.get('DOAIDE_SMTP_HOST')),'payments':bool(os.environ.get('RAZORPAY_KEY_ID') and os.environ.get('RAZORPAY_KEY_SECRET') and os.environ.get('RAZORPAY_WEBHOOK_SECRET')),'invoice_adapter':bool(os.environ.get('DOAIDE_INVOICE_ADAPTER_URL')),'ocr':bool(shutil.which('tesseract') and shutil.which('pdftoppm'))}
 
     @app.post('/api/imports/collect/preview',status_code=201)
     def import_preview(body:ImportPreview,user=Depends(current_user)):

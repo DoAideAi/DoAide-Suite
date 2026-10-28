@@ -2,7 +2,7 @@
 
 Operational local workflows for **Scope, Collect, AMC, RFQ, Tender, Handover, OrderDesk, Batch, Fees, Renew, SOP and ClaimPack** in one workspace.
 
-See the [product index](PRODUCT_INDEX.md), [implementation status](docs/BUILD_STATUS.md), [remaining scope](docs/REMAINING_SCOPE.md), the [detailed scope of work](docs/SCOPE_OF_WORK.md), and the [operations runbook](docs/OPERATIONS.md). The app now includes shared teams, operational entities, evidence files, approvals, frozen documents, financial/stock ledgers and durable jobs. v0.4 closes the product-feature checklist from v0.3. Production acceptance and additional portfolio adapters remain open; this is not a claim that every original scope requirement is complete.
+See the [product index](PRODUCT_INDEX.md), [implementation status](docs/BUILD_STATUS.md), [remaining scope](docs/REMAINING_SCOPE.md), the [detailed scope of work](docs/SCOPE_OF_WORK.md), and the [operations runbook](docs/OPERATIONS.md). The app now includes shared teams, operational entities, evidence files, approvals, frozen documents, financial/stock ledgers and durable jobs. v0.5 adds authoritative Inventory reservations and Scheduler appointments to the v0.4 local workflows; see [connection setup](docs/AUTHORITATIVE_CONNECTIONS.md). Production acceptance and additional portfolio adapters remain open; this is not a claim that every original scope requirement is complete.
 
 Repository: [DoAideAi/DoAide-Suite](https://github.com/DoAideAi/DoAide-Suite). All twelve products share this repository and application.
 
@@ -19,7 +19,7 @@ make dev
 
 Open [DoAide locally](http://127.0.0.1:8012). Create or sign in to a local account. Open a product, load a synthetic example or enter details, and **Save record**. Use **Operations** for the actual product workflow; **Files & documents** holds evidence and immutable exports. **Workspace tools** provides portfolio reports, accounting CSV exports, plan/usage controls, team invitations, imports and stock. Fees can reschedule unpaid instalments after receipts. Renew can schedule notice milestones and backup escalation. OrderDesk and Batch include evidence-backed stock-count corrections.
 
-`make dev` starts both the API and job worker. Ctrl+C stops both. Files and PDFs are stored privately in `var/doaide.db`, so database backups include the evidence. Existing accounts and records migrate additively to schema 4; removed memberships remain removed across restarts. A verified backup of the pre-upgrade database is retained in ignored `var/backups`.
+`make dev` starts both the API and job worker. Ctrl+C stops both. Files and PDFs are stored privately in `var/doaide.db`, so database backups include the evidence. Existing accounts and records migrate additively to schema 5; removed memberships remain removed across restarts. A verified backup of the pre-upgrade database is retained in ignored `var/backups`.
 
 External delivery defaults to disabled. Configure `.env` from `.env.example` and follow the runbook before enabling any provider. The app never treats an unavailable integration as a successful message, invoice, payment or submission.
 

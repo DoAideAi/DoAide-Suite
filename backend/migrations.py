@@ -3,7 +3,7 @@ import json
 
 
 def migrate(db):
-    if db.execute('PRAGMA user_version').fetchone()[0]>4:
+    if db.execute('PRAGMA user_version').fetchone()[0]>5:
         raise RuntimeError('This database requires a newer DoAide release')
     db.executescript("""
     CREATE TABLE IF NOT EXISTS workspaces (
@@ -141,6 +141,10 @@ def migrate(db):
     CREATE TABLE IF NOT EXISTS ledger_evidence (
         entry_id TEXT PRIMARY KEY REFERENCES ledger(id), method TEXT NOT NULL, file_id TEXT REFERENCES files(id)
     );
+    CREATE TABLE IF NOT EXISTS portfolio_authorities (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id), service TEXT NOT NULL,
+        endpoint TEXT NOT NULL, activated_at TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(workspace_id,service)
+    );
     CREATE TABLE IF NOT EXISTS request_limits (
         bucket TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL
     );
@@ -152,7 +156,7 @@ def migrate(db):
     for user in db.execute("SELECT * FROM users").fetchall():
         ensure_workspace(db, dict(user))
     db.execute("INSERT OR IGNORE INTO record_workspaces SELECT id, user_id FROM records")
-    db.execute("PRAGMA user_version = 4")
+    db.execute("PRAGMA user_version = 5")
 
 
 def ensure_workspace(db, user):

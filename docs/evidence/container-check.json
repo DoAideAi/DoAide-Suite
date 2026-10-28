@@ -1,6 +1,6 @@
 {
-  "version": "0.4.0",
-  "image_id": "sha256:ceaa867202c07d4bed92cb8a4f542320d80de68ef4322e50b54519da08916c7a",
+  "version": "0.5.0",
+  "image_id": "sha256:1b52670617e93f309321ce97e72c2401c57860215d56a61470aec250ccac6262",
   "user_id": "10001",
   "read_only_root": true,
   "ephemeral_database": true,
@@ -9,7 +9,7 @@
   "frozen_pdf_identity": "passed",
   "portfolio_products": 12,
   "billing_mode": "local",
-  "schema_version": 4,
+  "schema_version": 5,
   "worker_readiness": "passed",
   "external_provider_requests": 0
 }

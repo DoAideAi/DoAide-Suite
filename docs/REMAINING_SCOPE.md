@@ -1,6 +1,6 @@
 # Remaining integration and release acceptance
 
-28 October 2026 · v0.4
+28 October 2026 · v0.5
 
 The v0.3 product-feature checklist has been implemented in the shared application. This does **not** establish that the twelve original scopes are production-complete. Original requirements remain in [SCOPE_OF_WORK.md](SCOPE_OF_WORK.md) and the individual scopes.
 
@@ -25,8 +25,8 @@ The v0.3 product-feature checklist has been implemented in the shared applicatio
 
 - **Implemented, awaiting configured-account acceptance:** SMTP/recovery, Razorpay, Stripe test billing, Groq transcription, Meta WhatsApp intake/media, Contracts clause import and Invoicer draft creation. No real transactions or messages were sent. See [INTEGRATIONS.md](INTEGRATIONS.md).
 - **Invoicer deployment dependency:** the existing service lacked a draft-create route. The real authenticated endpoint, migration and tests now exist on its local `codex/suite-invoice-handoff` branch. The complete patch is included here. Apply/migrate a test deployment and configure the workspace connection before accepting the deployed integration.
-- **Remaining portfolio adapter implementation:** the broader scopes name Scheduler availability, Inventory catalogue/parts/lot receiving, Desk conversations/orders, Realty property references, Khata reconciliation, Proposals templates, Payroll rosters and course enrollment sources. These native adapters are not implemented by v0.4. Current workflows use explicit entries, retained files, CSV and external references. These dependencies are not marked complete.
-- Inspection confirmed that Inventory exposes product/warehouse stock rather than the suite's lot-quality/expiry ledger, and Scheduler booking creation sends confirmations without the suite's retry-safe contract. Connecting them requires explicit data ownership/mapping and service contracts. A read-only stock snapshot must not be represented as synchronized inventory. Their production services were not changed.
+- **Remaining portfolio adapter implementation:** Inventory fractional lot/quality/expiry receiving and AMC parts consumption, Desk conversations/orders, Realty property references, Khata reconciliation, Proposals templates, Payroll rosters and course enrollment sources. Current workflows for these dependencies use explicit entries, retained files, CSV and references; they are not marked complete.
+- **Implemented in v0.5, awaiting deployment/account acceptance:** Inventory catalogue and authoritative OrderDesk reserve/dispatch/cancel/reconcile; Scheduler authoritative AMC create/reschedule/cancel/reconcile with native/public collision guards. Full service patches, additive migrations and concurrency tests are included. Real applications pass isolated HTTP acceptance with three temporary databases. See [AUTHORITATIVE_CONNECTIONS.md](AUTHORITATIVE_CONNECTIONS.md) for ownership, migration boundaries and deployment instructions. Production services were not changed.
 - Direct vendor cancellation, tender-portal automation and automatic dispute submission remain later, separately authorized integrations, as stated in the original scopes.
 
 ## Release acceptance still open

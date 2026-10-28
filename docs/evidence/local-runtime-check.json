@@ -1,22 +1,18 @@
 {
-  "version": "0.4.0",
-  "schema_version": 4,
-  "backup": "var/backups/doaide-v04-cutover-20261028.db",
-  "before": {
-    "users": 2,
-    "records": 16,
-    "audit_events": 18
-  },
-  "after": {
-    "users": 2,
-    "records": 16,
-    "audit_events": 18
+  "version": "0.5.0",
+  "schema": 5,
+  "readiness": {
+    "ready": true
   },
   "integrity": "ok",
   "foreign_keys": "ok",
-  "ready": true,
-  "worker_healthy": true,
-  "external_delivery": "disabled",
-  "billing": "local",
-  "browser_acceptance": "unverified: local URL rejected by browser policy"
+  "counts": {
+    "users": 2,
+    "records": 16,
+    "audit_events": 18,
+    "files": 0,
+    "portfolio_authorities": 0
+  },
+  "backup": "var/backups/doaide-v05-cutover-20261028.db",
+  "external_connections_activated": false
 }

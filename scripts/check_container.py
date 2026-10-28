@@ -27,7 +27,7 @@ def check(image,host=None):
                 time.sleep(.25)
             else:raise AssertionError('Container did not become ready')
             specification=client.get('/openapi.json').json();version=specification['info']['version']
-            assert version=='0.4.0'
+            assert version=='0.5.0'
             assert all(route in specification['paths'] for route in ('/api/fees/academic','/api/webhooks/whatsapp','/api/records/{record_id}/recordings','/api/contractor/{token}/start'))
             response=client.post('/api/auth/register',json={'email':'container-check@example.test','password':'synthetic-container-test-password'})
             assert response.status_code==201,response.text
@@ -42,11 +42,12 @@ def check(image,host=None):
             assert pdf.status_code==200 and len(PdfReader(io.BytesIO(pdf.content)).pages)>=1
             assert client.get('/api/documents/'+doc+'/pdf').content==pdf.content
             assert client.get('/api/billing').json()['mode']=='local'
+            assert client.get('/api/integrations').json()['authorities']=={'inventory':{'configured':False,'active':False},'scheduler':{'configured':False,'active':False}}
             report=client.get('/api/reports/portfolio').json();assert report['total_records']==1 and len(report['totals'])==12
             run('exec',container,'python','-m','backend.worker','--once')
-            state=client.get('/api/diagnostics').json();assert state['schema_version']==4 and state['worker_healthy']
+            state=client.get('/api/diagnostics').json();assert state['schema_version']==5 and state['worker_healthy']
             uid=run('exec',container,'id','-u');assert uid=='10001'
-            return {'version':version,'image_id':run('image','inspect',image,'--format','{{.Id}}'),'user_id':uid,'read_only_root':True,'ephemeral_database':True,'registration':'passed','operational_approval':'passed','frozen_pdf_identity':'passed','portfolio_products':12,'billing_mode':'local','schema_version':4,'worker_readiness':'passed','external_provider_requests':0}
+            return {'version':version,'image_id':run('image','inspect',image,'--format','{{.Id}}'),'user_id':uid,'read_only_root':True,'ephemeral_database':True,'registration':'passed','operational_approval':'passed','frozen_pdf_identity':'passed','portfolio_products':12,'billing_mode':'local','schema_version':5,'worker_readiness':'passed','external_provider_requests':0}
     finally:run('rm','-f',container)
 
 

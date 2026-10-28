@@ -1,0 +1,113 @@
+From 4179e459232b8fc589229939dfec7b34f7cfbbbc Mon Sep 17 00:00:00 2001
+From: r2st <102911930+r2st@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 22:26:24 +0530
+Subject: [PATCH] Show reserved and available balances in native Inventory
+
+---
+ backend/app/routers/stock.py     | 13 +++++++++----
+ backend/app/schemas/stock.py     |  2 ++
+ backend/tests/test_suite.py      |  3 ++-
+ frontend/src/pages/StockPage.jsx |  4 +++-
+ 4 files changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/backend/app/routers/stock.py b/backend/app/routers/stock.py
+index d0abb5d..339d409 100644
+--- a/backend/app/routers/stock.py
++++ b/backend/app/routers/stock.py
+@@ -1,4 +1,4 @@
+-from app.services.reservations import lock_stock, check_quantity, check_refs
++from app.services.reservations import lock_stock, check_quantity, check_refs, held
+ from fastapi import APIRouter, Depends, HTTPException, Query
+ from sqlalchemy.orm import Session
+ 
+@@ -13,6 +13,11 @@ from app.schemas.stock import StockAlert, StockLevelCreate, StockLevelOut, Stock
+ router = APIRouter(prefix="/stock", tags=["stock"])
+ 
+ 
++def balance(db, stock):
++    reserved = held(db, stock.business_id, stock.product_id, stock.warehouse_id)
++    return {**StockLevelOut.model_validate(stock).model_dump(), 'reserved_quantity': reserved, 'available_quantity': stock.quantity - reserved}
++
++
+ @router.get("", response_model=list[StockLevelOut])
+ def list_stock(
+     warehouse_id: int | None = None,
+@@ -27,7 +32,7 @@ def list_stock(
+         q = q.filter(StockLevel.warehouse_id == warehouse_id)
+     if product_id:
+         q = q.filter(StockLevel.product_id == product_id)
+-    return q.offset(skip).limit(limit).all()
++    return [balance(db, stock) for stock in q.offset(skip).limit(limit).all()]
+ 
+ 
+ @router.post("", response_model=StockLevelOut, status_code=201, dependencies=[Depends(require_staff)])
+@@ -46,7 +51,7 @@ def create_stock_level(body: StockLevelCreate, user: User = Depends(get_current_
+     db.add(sl)
+     db.commit()
+     db.refresh(sl)
+-    return sl
++    return balance(db, sl)
+ 
+ 
+ @router.patch("/{stock_id}", response_model=StockLevelOut, dependencies=[Depends(require_staff)])
+@@ -65,7 +70,7 @@ def update_stock_level(
+         setattr(sl, field, value)
+     db.commit()
+     db.refresh(sl)
+-    return sl
++    return balance(db, sl)
+ 
+ 
+ @router.get("/alerts", response_model=list[StockAlert])
+diff --git a/backend/app/schemas/stock.py b/backend/app/schemas/stock.py
+index 1449c53..af3f5ac 100644
+--- a/backend/app/schemas/stock.py
++++ b/backend/app/schemas/stock.py
+@@ -18,6 +18,8 @@ class StockLevelUpdate(BaseModel):
+ 
+ 
+ class StockLevelOut(BaseModel):
++    reserved_quantity: int = 0
++    available_quantity: int = 0
+     id: int
+     product_id: int
+     warehouse_id: int
+diff --git a/backend/tests/test_suite.py b/backend/tests/test_suite.py
+index 884f9bd..61c33a1 100644
+--- a/backend/tests/test_suite.py
++++ b/backend/tests/test_suite.py
+@@ -28,7 +28,8 @@ def test_retry_dispatch_once_and_changed_reference_rejected(auth_client):
+     a=c.post('/suite/reservations',json=b)
+     assert a.status_code==200,a.text
+     assert c.post('/suite/reservations',json=b).json()==a.json()
+-    assert c.get('/stock').json()[0]['quantity']==10
++    balance=c.get('/stock').json()[0]
++    assert (balance['quantity'],balance['reserved_quantity'],balance['available_quantity'])==(10,7,3)
+     assert c.get('/suite/stock',params={'warehouse_id':s['warehouse_id']}).json()[0]['held']==7
+     assert c.post('/suite/reservations',json={**b,'lines':[{**b['lines'][0],'quantity':8}]}).status_code==409
+     assert c.post('/suite/reservations/suite-order-1/dispatch').json()['status']=='dispatched'
+diff --git a/frontend/src/pages/StockPage.jsx b/frontend/src/pages/StockPage.jsx
+index 65d3711..01b2fa5 100644
+--- a/frontend/src/pages/StockPage.jsx
++++ b/frontend/src/pages/StockPage.jsx
+@@ -12,7 +12,7 @@ export default function StockPage() {
+       <div className="overflow-x-auto rounded-xl" style={{ border: "1px solid var(--card-border)" }}>
+         <table className="w-full text-sm">
+           <thead><tr style={{ background: "var(--bg-tertiary)" }}>
+-            {["Product ID", "Warehouse ID", "Quantity", "Min", "Max", "Reorder Point"].map((h) => (
++            {["Product ID", "Warehouse ID", "On hand", "Reserved", "Available", "Min", "Max", "Reorder Point"].map((h) => (
+               <th key={h} className="text-left px-4 py-3 font-medium" style={{ color: "var(--text-secondary)" }}>{h}</th>
+             ))}
+           </tr></thead>
+@@ -22,6 +22,8 @@ export default function StockPage() {
+                 <td className="px-4 py-3" style={{ color: "var(--text-primary)" }}>{s.product_id}</td>
+                 <td className="px-4 py-3" style={{ color: "var(--text-primary)" }}>{s.warehouse_id}</td>
+                 <td className="px-4 py-3 font-mono" style={{ color: s.quantity <= s.reorder_point ? "var(--danger)" : "var(--text-primary)" }}>{s.quantity}</td>
++                <td className="px-4 py-3 font-mono">{s.reserved_quantity}</td>
++                <td className="px-4 py-3 font-mono">{s.available_quantity}</td>
+                 <td className="px-4 py-3" style={{ color: "var(--text-secondary)" }}>{s.min_level}</td>
+                 <td className="px-4 py-3" style={{ color: "var(--text-secondary)" }}>{s.max_level}</td>
+                 <td className="px-4 py-3" style={{ color: "var(--text-secondary)" }}>{s.reorder_point}</td>
+-- 
+2.50.1 (Apple Git-155)
+

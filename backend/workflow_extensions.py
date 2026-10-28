@@ -74,6 +74,9 @@ def validate_resource(db, record, user, kind, data, item_id):
 
 
 def before_action(db,r,u,a,d,s):
+    if r['product']=='amc' and a in ('start_visit','complete_visit'):
+        from .authority_adapters import require_current_booking
+        require_current_booking(op.one_item(db,r['id'],d['item_id'],'visit')['data'])
     if r['product']=='rfq' and a in ('compare','award','quote_revision','comparison_export') and s['data'].get('comparison'):
         history=s['data'].setdefault('comparison_history',[])
         previous=s['data']['comparison']
@@ -102,7 +105,7 @@ def before_action(db,r,u,a,d,s):
 
 
 def after_action(db,r,u,a,d,s):
-    if r['product']=='orderdesk' and a=='reserve':
+    if r['product']=='orderdesk' and a=='reserve' and not s['data'].get('inventory_reference'):
         policy=singleton(db,r,'delivery')
         hours=int(policy.get('hold_hours',24))
         s['data']['reservation_expires_at']=(datetime.now(timezone.utc)+timedelta(hours=hours)).isoformat()
@@ -121,6 +124,7 @@ def periodic(db):
     for row in rows:
         r=dict(row);s=op.get_state(db,r['id']);expiry=s['data'].get('reservation_expires_at')
         if not expiry or expiry>op.now():continue
+        if s['data'].get('inventory_reference'):continue
         u={'workspace_id':r['workspace_id'],'email':'reservation-worker'}
         for line in s['data']['parsed_order']['lines']:
             stock=op.stock_row(db,u,line['sku']);quantity=decimal(line['quantity'])
