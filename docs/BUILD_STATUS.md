@@ -1,6 +1,6 @@
 # DoAide suite implementation status
 
-Updated 28 October 2026 · v0.6 · schema 5
+Updated 29 October 2026 · v0.6 · schema 5
 
 All twelve products have executable local operational workflows. v0.4 implements the product-feature gaps identified in the v0.3 audit. The outstanding portfolio adapter code is implemented in v0.6. **Configured-account, browser, pilot and production acceptance remain open**. See [REMAINING_SCOPE.md](REMAINING_SCOPE.md).
 
@@ -21,10 +21,10 @@ Inventory owns connected OrderDesk stock/holds; Scheduler owns connected AMC app
 
 ## Verification evidence
 
-- **179 suite tests pass**, covering all twelve journeys, role/workspace isolation, stale input, stock races, callbacks/retries, contact limits, technician links, backorders/expiry, late fees/withdrawal, academic privacy, new-hire enrollment, redaction exports, transcription consent, WhatsApp signatures/media-host restrictions, encrypted restore and erasure isolation.
+- **180 suite tests pass**, covering all twelve journeys, role/workspace isolation, stale input, stock races, callbacks/retries, contact limits, technician links, backorders/expiry, late fees/withdrawal, academic privacy, new-hire enrollment, redaction exports, transcription consent, WhatsApp signatures/media-host restrictions, encrypted restore and erasure isolation.
 - **35 Inventory tests, 42 Scheduler tests and 41 Khata tests pass**, including competing operations, native-writer protection, replay, business fencing and additive migrations.
 - **95 unchanged Invoicer tests passed in the retained v0.4 baseline**, including new API cases for authenticated drafts, exact totals, retries, source checksums and account isolation. The endpoint source/migration/tests are distributed in [integrations/invoicer](../integrations/invoicer).
-- **297 current backend checks pass** ([service output](evidence/service-validation.txt)) across Suite, Inventory, Scheduler and Khata. Inventory native frontend build also passes.
+- **298 current backend checks pass** ([service output](evidence/service-validation.txt)) across Suite, Inventory, Scheduler and Khata. Inventory native frontend build also passes.
 - Real HTTP acceptance covers Inventory/Scheduler with three isolated databases and Proposals/Payroll/Khata with four isolated databases; no external services are contacted. [Authority evidence](evidence/authority-contract-check.json), [source evidence](evidence/source-contract-check.json), [native patch reconstruction](evidence/native-patch-check.json). Desk/Realty use actual source contracts and deterministic adapter tests, not deployed-service acceptance.
 - Frontend production build and npm audit pass. Final output: [validation.txt](evidence/validation.txt).
 - The runtime image passes non-root/read-only/ephemeral-database checks, v0.6 routes, schema 5, worker health, twelve-product reporting and immutable PDF download: [container-check.json](evidence/container-check.json).

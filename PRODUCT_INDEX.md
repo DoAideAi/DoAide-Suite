@@ -1,6 +1,6 @@
 # DoAide Suite product index
 
-Updated: 28 October 2026 · version 0.6.0
+Updated: 29 October 2026 · version 0.6.0
 
 Repository: [DoAideAi/DoAide-Suite](https://github.com/DoAideAi/DoAide-Suite), private, published using `r2st`.
 Local checkout: `/Users/dev/projects/doaide/DoAide-Suite`.
@@ -24,7 +24,7 @@ All twelve products run in this shared FastAPI/React/SQLite application. **Statu
 
 Shared controls include roles/recovery, private evidence, frozen documents, financial/stock ledgers, durable jobs, reports, plans/billing, academic access, request limits, encrypted backups and isolated workspace-data erasure. External delivery is disabled by default.
 
-- [Implementation and evidence](docs/BUILD_STATUS.md): 179 suite tests, 35 Inventory tests and 42 Scheduler tests, 41 Khata tests; 95 retained Invoicer checks; frontend build/audit, container, PDF and backup/restore checks.
+- [Implementation and evidence](docs/BUILD_STATUS.md): 180 suite tests, 35 Inventory tests and 42 Scheduler tests, 41 Khata tests; 95 retained Invoicer checks; frontend build/audit, container, PDF and backup/restore checks.
 - [Remaining integrations and release acceptance](docs/REMAINING_SCOPE.md): provider accounts, current browser/accessibility testing, pilot validation and production operations.
 - [Connection setup](docs/INTEGRATIONS.md), [Invoicer source patch](integrations/invoicer/README.md), [scope of work](docs/SCOPE_OF_WORK.md) and [runbook](docs/OPERATIONS.md).
 - [Deployment strategy](STRATEGY.md): build off-server and release immutable images after acceptance.

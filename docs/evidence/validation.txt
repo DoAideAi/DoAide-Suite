@@ -1,14 +1,14 @@
 uv run pytest -q
 ........................................................................ [ 40%]
 ........................................................................ [ 80%]
-...................................                                      [100%]
+....................................                                     [100%]
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/fastapi/testclient.py:1
   /Users/dev/projects/doaide/DoAide-Suite/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-179 passed, 1 warning in 20.68s
+180 passed, 1 warning in 19.52s
 npm --prefix frontend run build
 
 > doaide-suite-web@0.6.0 build
@@ -22,6 +22,6 @@ computing gzip size...
 dist/index.html                   0.42 kB │ gzip:  0.29 kB
 dist/assets/index-D3ihQ1Dd.css   29.06 kB │ gzip:  7.04 kB
 dist/assets/index-tEQtzHZA.js   222.31 kB │ gzip: 66.24 kB
-✓ built in 783ms
+✓ built in 804ms
 npm --prefix frontend audit
 found 0 vulnerabilities

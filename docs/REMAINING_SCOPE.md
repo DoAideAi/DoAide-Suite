@@ -1,6 +1,6 @@
 # Remaining integration and release acceptance
 
-28 October 2026 · v0.6
+29 October 2026 · v0.6
 
 The v0.3 product-feature checklist has been implemented in the shared application. This does **not** establish that the twelve original scopes are production-complete. Original requirements remain in [SCOPE_OF_WORK.md](SCOPE_OF_WORK.md) and the individual scopes.
 

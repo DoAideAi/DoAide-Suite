@@ -145,6 +145,15 @@ def complete(db,job,result):
         rows={x['sku']:x for x in result['balances']};op.require(len(rows)==len(result['balances']),'Duplicate lot SKU');project(db,u,rows)
     elif result['status']=='committed':
         op.require(isinstance(result.get('before'),dict) and isinstance(result.get('after'),dict),'Lot receipt is missing balances')
+        action=d['action'];payload=d['payload']
+        if action=='receive_lots':expected={'lot:'+x['lot'] for x in payload['lots']}
+        elif action=='reserve_materials':expected={'lot:'+x['lot'] for x in payload['usage']}
+        elif action=='release_materials':expected=set(s['data'].get('material_reservations',{}))
+        elif action=='produce':expected={'lot:'+x['lot'] for x in payload['usage']}|set(s['data'].get('material_reservations',{}))|{payload['output']['sku']}
+        elif action=='return_material':expected={'lot:'+d['input']['lot']}
+        elif action in ('adjust_lot','set_lot_quality'):expected={d['input']['sku']}
+        else:expected={'finished:'+json.loads(r['payload'])['batch_number']}
+        op.require(expected and set(result['before'])==set(result['after'])==expected,'Lot receipt omitted or added affected balances')
         project(db,u,result['before']);local_apply(db,r,u,d['action'],d['input'],s,out)
         for sku,row in result['after'].items():
             local=op.stock_row(db,u,sku)

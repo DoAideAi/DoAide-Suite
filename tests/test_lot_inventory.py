@@ -1,5 +1,6 @@
 import json
 import httpx
+import pytest
 from backend.worker import run_once
 from test_api import app,client,create
 from test_operations import action,item,workflow,date_plus,upload
@@ -39,10 +40,13 @@ def test_lot_scope_mapping_cannot_be_changed_at_enqueue(client,monkeypatch):
     assert client.get('/api/inventory').json()==[]
 
 
-def test_malformed_lot_receipt_rolls_back_local_projection(client,tmp_path,monkeypatch):
+@pytest.mark.parametrize('empty',[False,True])
+def test_malformed_lot_receipt_rolls_back_local_projection(client,tmp_path,monkeypatch,empty):
     r,lot=prepared(client,monkeypatch);action(client,r,'receive_lots')
     def malformed(req):
-        response=receipt(req).json();response['after']['lot:L1']['quantity']='999';return httpx.Response(200,json=response)
+        response=receipt(req).json();response['after']['lot:L1']['quantity']='999'
+        if empty:response['before']={};response['after']={}
+        return httpx.Response(200,json=response)
     assert run_once(tmp_path/'test.db',httpx.MockTransport(malformed))['state']=='blocked'
     assert client.get('/api/inventory').json()==[] and workflow(client,r)['stage']=='inventory-pending'
 

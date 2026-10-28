@@ -190,9 +190,11 @@ def test_renewal_changed_owners_block_old_delivery_and_usage_validated(client,tm
     response=client.put(f'/api/records/{r["id"]}/items/terms/{term["id"]}',json={'revision':workflow(client,r)['revision'],'data':{**terms,'owner':'new@example.test'}})
     assert response.status_code==200,response.text
     with pytest.raises(Blocked,match='changed'):deliver(old,path)
-    usage={'reference':'S1','auto_renew':'Yes','active_seats':'8','verified_on':date_plus(1),'source':'Admin report'}
+    from backend.operations import business_today
+    with database(path) as db:today=business_today(db,client.get('/api/auth/me').json())
+    usage={'reference':'S1','auto_renew':'Yes','active_seats':'8','verified_on':(today+timedelta(days=1)).isoformat(),'source':'Admin report'}
     item(client,r,'subscription',usage,422)
-    item(client,r,'subscription',{**usage,'verified_on':date_plus(0),'active_seats':'11'},422)
+    item(client,r,'subscription',{**usage,'verified_on':today.isoformat(),'active_seats':'11'},422)
 
 
 def test_reports_all_products_isolated_and_accounting_reconciles(client,app):
