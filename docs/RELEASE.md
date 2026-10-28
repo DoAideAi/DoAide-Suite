@@ -9,12 +9,18 @@ These tools do not provision a host, activate provider accounts or approve busin
 policies. Browser/mobile acceptance remains unverified because the browser tool
 rejected the local URL; no alternate browser route was used.
 
+## Verified release artifacts
+
+[Source validation](https://github.com/DoAideAi/DoAide-Suite/actions/runs/40760668202) and [release verification/publication](https://github.com/DoAideAi/DoAide-Suite/actions/runs/40760700538) passed for commit `d52168ac2b3baf99f8cf121f23aeba0ffd6c3feb`. The API, OCR worker and scanner images are published for ARM64 and AMD64. Use the exact digests in [v0.6.1.env.example](../deploy/releases/v0.6.1.env.example); [release evidence](evidence/release-images.json) and [Linux container acceptance](evidence/production-stack-ci.json) are retained.
+
+The target host needs a GitHub Packages credential with `read:packages` access to these organization images. Configure it privately with `docker login ghcr.io`; a GitHub CLI credential with only repository access is insufficient. Never paste a token into the repository or chat.
+
 ## Host decision
 
 The read-only inspection of the existing primary host, `89.167.8.178`, failed the
 deployment gate: about 81% disk usage (rounded to 82% by `df`), 6.74 GiB free disk,
 1.39 GiB available RAM and 98.9% swap usage. No production service was changed.
-See [host evidence](evidence/production-host-preflight.json).
+See [host evidence](evidence/production-host-preflight.json). SSH access to the secondary host `204.168.241.124` timed out during this release; its capacity remains unverified.
 
 Use a dedicated Linux host with at least 8 GiB RAM, sufficient CPU for OCR and
 signature validation, encrypted persistent storage and configured swap. The

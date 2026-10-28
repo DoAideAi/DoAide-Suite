@@ -1,0 +1,16 @@
+{
+  "source_sha": "d52168ac2b3baf99f8cf121f23aeba0ffd6c3feb",
+  "publisher": "r2st",
+  "platforms": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "validation_run": "https://github.com/DoAideAi/DoAide-Suite/actions/runs/40760668202",
+  "release_run": "https://github.com/DoAideAi/DoAide-Suite/actions/runs/40760700538",
+  "images": {
+    "api": "ghcr.io/doaideai/doaide-suite-api@sha256:9cf1600813db0b534e82e3207a8ce6a0228e919e15c0f1b9db2c77c83bfc8538",
+    "worker": "ghcr.io/doaideai/doaide-suite-worker@sha256:fa391e41718cd046bf9131e92a60d4b3dd5b0c909c092e26b59927d0eddddb2d",
+    "scanner": "ghcr.io/doaideai/doaide-suite-scanner@sha256:431a69b72d77301d9c7e4642003a9b30bb5628e0859c2c9a6fbf13534628691e"
+  },
+  "production_deployed": false
+}

@@ -25,6 +25,9 @@ The production stack now includes private ClamAV 1.4.6 scanning and signature up
 
 ## Verification evidence
 
+Both [source validation](https://github.com/DoAideAi/DoAide-Suite/actions/runs/40760668202) and [release validation/publication](https://github.com/DoAideAi/DoAide-Suite/actions/runs/40760700538) pass for source commit `d52168a`. All three images are published for ARM64 and AMD64 with [pinned deployment digests](../deploy/releases/v0.6.1.env.example). Production deployment remains blocked by host capacity and target selection.
+
+
 - **187 suite tests pass**, covering all twelve journeys, role/workspace isolation, stale input, stock races, callbacks/retries, contact limits, technician links, backorders/expiry, late fees/withdrawal, academic privacy, new-hire enrollment, redaction exports, transcription consent, WhatsApp signatures/media-host restrictions, encrypted restore and erasure isolation.
 - **35 Inventory tests, 42 Scheduler tests and 41 Khata tests pass**, including competing operations, native-writer protection, replay, business fencing and additive migrations.
 - **95 unchanged Invoicer tests passed in the retained v0.4 baseline**, including new API cases for authenticated drafts, exact totals, retries, source checksums and account isolation. The endpoint source/migration/tests are distributed in [integrations/invoicer](../integrations/invoicer).
