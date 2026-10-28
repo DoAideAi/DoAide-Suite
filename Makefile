@@ -1,4 +1,4 @@
-.PHONY: setup build dev worker backup test check scopes
+.PHONY: setup build dev worker backup test check scopes release-check
 setup:
 	uv sync --locked
 	npm --prefix frontend ci
@@ -17,3 +17,8 @@ worker:
 	uv run $(if $(wildcard .env),--env-file .env,) python -m backend.worker
 backup:
 	uv run python scripts/backup.py
+release-check:
+	docker build --target runtime -t doaide-suite:release-validation .
+	docker build --target ocr-worker -t doaide-suite-worker:release-validation .
+	docker build -f deploy/clamav/Dockerfile -t doaide-suite-scanner:release-validation .
+	uv run python scripts/check_production_stack.py

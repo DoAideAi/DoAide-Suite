@@ -22,24 +22,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from .domain import DomainError
+from .malware import malware_screen
 
 MAX_FILE = 10 * 1024 * 1024
 MAX_TEXT = 200_000
-
-
-def malware_screen(content):
-    scanner=shutil.which('clamscan')
-    if not scanner:
-        if os.environ.get('DOAIDE_REQUIRE_MALWARE_SCAN','false')=='true':
-            raise DomainError('Malware screening is required but ClamAV is unavailable')
-        return 'not-configured'
-    with tempfile.NamedTemporaryFile(prefix='doaide-scan-') as source:
-        source.write(content);source.flush()
-        try:result=subprocess.run([scanner,'--no-summary',source.name],capture_output=True,timeout=45)
-        except subprocess.TimeoutExpired:raise DomainError('Malware screening timed out; retry the upload')
-        if result.returncode==1:raise DomainError('Malware screening rejected this file')
-        if result.returncode!=0:raise DomainError('Malware screening failed; update the scanner definitions and retry')
-    return 'clean'
 
 
 def extract_file(name, content):

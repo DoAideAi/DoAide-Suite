@@ -22,13 +22,13 @@ Official contracts inspected: [Razorpay payment-link events](https://razorpay.co
 
 `DOAIDE_INVOICE_ADAPTER_URL` must be an HTTPS endpoint controlled by the organization; `DOAIDE_INVOICE_ADAPTER_TOKEN` remains server-only. The bridge must authenticate the bearer token and guarantee one draft per `Idempotency-Key`, including after timeouts. A POST body contains `source` (`doaide-scope` or `doaide-amc`) and an immutable `document` with source version, checksum and snapshot. Success must return JSON with a stable `invoice_id`. The worker records that reference and advances Scope to invoiced only after success.
 
-The existing Invoicer upload/extraction endpoint is not compatible with this contract and is intentionally not called. Implement and validate the bridge against the chosen invoice API before enabling it. A draft-invoice PDF remains available locally while handoff is blocked.
+The existing Invoicer upload/extraction endpoint is not compatible with this contract and is intentionally not called. The native bridge is now implemented and distributed in `integrations/invoicer`; apply its migration to an approved test deployment and validate the configured account before enabling it. A draft-invoice PDF remains available locally while handoff is blocked.
 
 ## Files, OCR and retention
 
 Uploads accept PDF, DOCX, PNG, JPEG, UTF-8 TXT and CSV up to 10 MiB. PDF extraction is limited to 100 pages, DOCX expanded content to 30 MiB, and images to 25 megapixels. OCR accepts up to 20 pages and uses local Tesseract and Poppler; the API process never calls an external AI service. OCR output is marked as needing review. File references do not count as verified business evidence until a reviewer performs the relevant action.
 
-Install/configure ClamAV and maintained definitions, then set `DOAIDE_REQUIRE_MALWARE_SCAN=true` for a pilot requiring screening. Uploads fail closed when the required scanner is absent or fails. Without this setting, local files show `not-configured` scan status rather than a false clean result.
+The production Compose stack supplies a private ClamAV daemon and signature updater; see [release setup](RELEASE.md). For standalone local scanning, install/configure ClamAV and maintained definitions, then set `DOAIDE_REQUIRE_MALWARE_SCAN=true` for a pilot requiring screening. Uploads fail closed when the required scanner is absent or fails. Without this setting, local files show `not-configured` scan status rather than a false clean result.
 
 `DOAIDE_FILE_RETENTION_DAYS=0` keeps source files until a policy is chosen. A positive value applies a retention deadline to new uploads. `uv run python scripts/retention.py` previews expired source files. `--apply` removes their original bytes/extracted text, preserves checksums and metadata, and writes deletion events. Frozen PDFs/manifests remain; this is not comprehensive account-data erasure. Existing file references cannot be reused after source deletion.
 
@@ -36,7 +36,7 @@ Install/configure ClamAV and maintained definitions, then set `DOAIDE_REQUIRE_MA
 
 Run `make backup`. SQLite's online backup API creates a new mode-0600 backup including file/PDF BLOBs. The script checks integrity and foreign keys, restores into a temporary directory, applies additive migrations, compares core counts and never overwrites the active database. Copy backups to approved encrypted storage separately.
 
-Before a deployment, stop the worker and take a backup. Build immutable images off-server. Deploy the app and worker using `compose.production.yml` with image digests, a shared local volume, and environment credentials. The provided deployment keeps the API bound to host loopback; a reviewed HTTPS reverse proxy is required for external access. SQLite deployment is one host with one API/worker pair; multi-host scaling requires a database migration.
+Before a deployment, stop the worker and take a backup. Build immutable images off-server. Deploy the app, OCR worker and private scanner using `compose.production.yml` with image digests, shared private volumes, and environment credentials. Complete the capacity/configuration gate in [RELEASE.md](RELEASE.md) first. The provided deployment keeps the API bound to host loopback; a reviewed HTTPS reverse proxy is required for external access. SQLite deployment is one host with one API/worker pair; multi-host scaling requires a database migration.
 
 Build API: `docker build --target runtime -t <immutable-tag> .`
 

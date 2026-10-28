@@ -1,0 +1,19 @@
+[Unit]
+Description=DoAide Suite HTTPS, capacity and backup probes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=doaide-monitor
+EnvironmentFile=/etc/doaide-suite/monitor.env
+WorkingDirectory=/opt/doaide-suite
+ExecStart=/usr/bin/python3 scripts/monitor_release.py --url ${DOAIDE_PUBLIC_URL} --metrics /var/lib/doaide-monitor/suite.prom
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=doaide-monitor
+# Install on an independent host and connect this unit's failure / Prometheus
+# gauge to an approved alert route. The application server's own timer cannot
+# detect complete host/network failure.

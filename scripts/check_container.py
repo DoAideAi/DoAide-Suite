@@ -27,7 +27,7 @@ def check(image,host=None):
                 time.sleep(.25)
             else:raise AssertionError('Container did not become ready')
             specification=client.get('/openapi.json').json();version=specification['info']['version']
-            assert version=='0.6.0'
+            assert version=='0.6.1'
             assert all(route in specification['paths'] for route in ('/api/fees/academic','/api/webhooks/whatsapp','/api/records/{record_id}/recordings','/api/contractor/{token}/start'))
             response=client.post('/api/auth/register',json={'email':'container-check@example.test','password':'synthetic-container-test-password'})
             assert response.status_code==201,response.text

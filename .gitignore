@@ -16,3 +16,6 @@ tmp/
 htmlcov/
 *.key
 *.enc
+release.env
+production.env
+*.receipt.json

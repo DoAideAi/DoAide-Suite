@@ -1,6 +1,6 @@
 {
-  "version": "0.6.0",
-  "image_id": "sha256:6a5b73d7c7a97527c28ac92be2f7fc8835fe099f9c607e210ad2a064f28e1d0d",
+  "version": "0.6.1",
+  "image_id": "sha256:4ea2042c3a4c69a9cfc0284e37d722b05369f5ca88363962ae2b810ea7adbb70",
   "user_id": "10001",
   "read_only_root": true,
   "ephemeral_database": true,

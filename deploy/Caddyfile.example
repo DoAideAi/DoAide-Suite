@@ -1,0 +1,17 @@
+# For a host-native Caddy instance. Merge into the existing proxy configuration;
+# do not replace other product routes. A containerized proxy needs a separately
+# reviewed network route to the application, not its own loopback interface.
+{$DOAIDE_DOMAIN} {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000"
+    request_body {
+        max_size 11MB
+    }
+    reverse_proxy 127.0.0.1:8012 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote_host}
+    }
+    # Bearer tokens appear in portal/recovery URLs. Do not enable access logs
+    # without an equivalent path-redaction policy to backend.logging_config.
+}

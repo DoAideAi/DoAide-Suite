@@ -184,12 +184,19 @@ def run_once(path=None,transport=None):
 
 
 def main():
+    from .runtime import validate_runtime
+    import signal
+    import threading
+    validate_runtime()
     parser=argparse.ArgumentParser();parser.add_argument('--once',action='store_true');args=parser.parse_args();initialize()
-    while True:
+    stopping=threading.Event()
+    signal.signal(signal.SIGTERM,lambda *_:stopping.set())
+    signal.signal(signal.SIGINT,lambda *_:stopping.set())
+    while not stopping.is_set():
         result=run_once()
         if result:print(json.dumps(result),flush=True)
         if args.once:return
-        if result is None:time.sleep(2)
+        if result is None:stopping.wait(2)
 
 
 if __name__=='__main__':main()

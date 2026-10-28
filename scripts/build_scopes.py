@@ -354,7 +354,7 @@ def build():
         slug = p["slug"]
         s = SPECS[slug]
         prefix = slug.upper()
-        chunks = [f"# DoAide {p['name']} Scope of Work\n\nVersion 1.2 · 28 October 2026 · Engineering scope and acceptance baseline\n",
+        chunks = [f"# DoAide {p['name']} Scope of Work\n\nVersion 1.3 · 29 October 2026 · Engineering scope and acceptance baseline\n",
             f"## Outcome and target customer\n\n{s['outcome']}\n\nPrimary customer: {p['buyer']}. Pilot complexity: {s['complexity']}. Delivery wave: {s['wave']}.\n",
             f"## Users and responsibilities\n\n{s['roles']}\n",
             f"## Principal workflow\n\n{s['journey']}\n",
@@ -374,7 +374,7 @@ def build():
         index.append(f"| [{p['name']}](scopes/{slug}.md) | {s['wave']} | {s['complexity']} | Operational local workflows; provider and pilot validation |")
     (ROOT / "docs" / "SCOPE_OF_WORK.md").write_text("""# DoAide Twelve Product Delivery Scope
 
-Version 1.2 · 28 October 2026
+Version 1.3 · 29 October 2026
 
 This engineering scope covers Scope, Collect, AMC, RFQ, Tender, Handover, OrderDesk, Batch, Fees, Renew, SOP, and ClaimPack. Each product has an individual scope describing customer outcomes, roles, workflow, numbered functional requirements, domain entities, business states, integrations, exclusions, acceptance scenarios, current implementation, and subsequent milestones.
 
@@ -439,7 +439,7 @@ This sequence is a dependency plan, not an instruction to ship every product sim
 
 All twelve products have operational local workflows described in their current implementation sections. External sending is disabled by default; credentials and explicit server configuration are required to enable provider jobs. No live messages, payments, bids, disputes or production deployments were performed during development.
 
-The suite is not certified as completing every production requirement in this scope. Configured email/recovery delivery, configured existing-product adapter acceptance, billing-provider acceptance, pilot-approved templates and current browser acceptance remain open. The v0.4 workflow additions close the product-feature checklist from v0.3; v0.6 implements the remaining portfolio adapters; configured-account and release acceptance are tracked in REMAINING_SCOPE.md. Plan entitlements, usage budgets, test-mode billing adapters and reporting are now implemented. Scope requirements are retained rather than silently reduced. See BUILD_STATUS.md for tested behavior and remaining release work.
+The suite is not certified as completing every production requirement in this scope. Configured email/recovery delivery, configured existing-product adapter acceptance, billing-provider acceptance, pilot-approved templates and current browser acceptance remain open. The v0.4 workflow additions close the product-feature checklist from v0.3; v0.6 implements the remaining portfolio adapters; v0.6.1 implements the production runtime and release-operation tools; configured-account and release acceptance are tracked in REMAINING_SCOPE.md. Plan entitlements, usage budgets, test-mode billing adapters and reporting are now implemented. Scope requirements are retained rather than silently reduced. See BUILD_STATUS.md for tested behavior and remaining release work.
 
 ## Dependency and scope management
 

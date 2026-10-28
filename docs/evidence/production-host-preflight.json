@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-10-28T19:52:08.770948+00:00",
+  "host": "89.167.8.178",
+  "disk_percent": 81.1,
+  "disk_available_gib": 6.74,
+  "memory_available_gib": 1.39,
+  "swap_percent": 98.9,
+  "inspection": "read-only",
+  "services_changed": false,
+  "capacity_gate": "failed"
+}

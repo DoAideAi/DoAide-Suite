@@ -17,6 +17,7 @@ from .db import database, initialize, password_hash, password_matches, token_has
 from .domain import DomainError, calculate
 from .migrations import ensure_workspace, record_access, permit, invalidate
 from .auth_lifecycle import install_auth_lifecycle, queue_auth, verification_required
+from .runtime import production, validate_runtime, registration_open
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,21 +49,31 @@ class StatusInput(StrictModel):
 def create_app(db_path=None):
     @asynccontextmanager
     async def lifespan(app):
+        validate_runtime()
         initialize(db_path)
         from .logging_config import install_private_access_logging
         install_private_access_logging()
         yield
 
-    app = FastAPI(title="DoAide Suite", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="DoAide Suite", version="0.6.1", lifespan=lifespan)
     from .security import RequestBoundary
     app.add_middleware(RequestBoundary,path=db_path)
+    if production():
+        import os
+        from urllib.parse import urlsplit
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=[urlsplit(os.environ.get('DOAIDE_PUBLIC_URL', '')).hostname or 'invalid', '127.0.0.1', 'localhost'])
 
     @app.middleware("http")
     async def boundary(request: Request, call_next):
         # Browser mutations must originate from this app or the local Vite editor.
         origin = request.headers.get("origin")
         if request.method not in ("GET", "HEAD", "OPTIONS"):
-            allowed = {str(request.base_url).rstrip("/"), "http://127.0.0.1:5173", "http://localhost:5173"}
+            if production():
+                import os
+                allowed = {os.environ['DOAIDE_PUBLIC_URL'].rstrip('/')}
+            else:
+                allowed = {str(request.base_url).rstrip("/"), "http://127.0.0.1:5173", "http://localhost:5173"}
             if origin and origin not in allowed:
                 return JSONResponse({"detail": "Cross-origin mutation rejected"}, status_code=403)
             if request.headers.get("sec-fetch-site") == "cross-site":
@@ -115,7 +126,7 @@ def create_app(db_path=None):
         with database(db_path) as db:
             db.execute("DELETE FROM sessions WHERE expires_at <= ?", (int(time.time()),))
             db.execute("INSERT INTO sessions VALUES (?, ?, ?)", (token_hash(token), user["id"], int(time.time()) + 43200))
-        response.set_cookie("doaide_session", token, max_age=43200, httponly=True, samesite="strict", secure=request.url.scheme == "https")
+        response.set_cookie("doaide_session", token, max_age=43200, httponly=True, samesite="strict", secure=production() or request.url.scheme == "https")
         response.delete_cookie('doaide_workspace')
         return {"id": user["id"], "email": user["email"]}
 
@@ -123,10 +134,12 @@ def create_app(db_path=None):
     def health():
         with database(db_path) as db:
             db.execute("SELECT 1").fetchone()
-        return {"status": "ok", "stage": "local-development", "products": len(PRODUCTS)}
+        return {"status": "ok", "stage": "production" if production() else "local-development", "products": len(PRODUCTS)}
 
     @app.post("/api/auth/register", status_code=201)
     def register(credentials: Credentials, request: Request, response: Response):
+        if not registration_open():
+            raise HTTPException(403, 'Self-registration is closed; contact the workspace administrator')
         rate_limit(request)
         email = credentials.email.strip().lower()
         if "@" not in email or " " in email or email.startswith("@") or email.endswith("@"):

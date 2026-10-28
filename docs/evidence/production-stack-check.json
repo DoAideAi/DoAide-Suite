@@ -1,0 +1,28 @@
+{
+  "images": {
+    "DOAIDE_IMAGE": "sha256:4ea2042c3a4c69a9cfc0284e37d722b05369f5ca88363962ae2b810ea7adbb70",
+    "DOAIDE_WORKER_IMAGE": "sha256:997572231fbe65e8f57b3f812f5fb02aee817404dc156c608f1c4c3be8fb59a4",
+    "DOAIDE_SCANNER_IMAGE": "sha256:9550104a9b6de0be5111584b3f0aed40e87d9d16d4120c89885cdb9a7a937c1d"
+  },
+  "fresh_compose_start": "passed",
+  "worker_restart": "passed",
+  "closed_registration_and_owner_login": "passed",
+  "secure_cookie": "passed",
+  "host_validation": "passed",
+  "clean_upload": "passed",
+  "real_clamav_eicar_rejection": "passed",
+  "scanner_outage_fails_closed": "passed",
+  "backup_restore": {
+    "backup": "/tmp/rehearsal.db",
+    "integrity": "ok",
+    "isolated_restore": "ok",
+    "counts": {
+      "users": 1,
+      "records": 1,
+      "audit_events": 1
+    },
+    "files": 1
+  },
+  "production_data_touched": false,
+  "external_provider_requests": 0
+}

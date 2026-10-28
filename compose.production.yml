@@ -1,28 +1,89 @@
-# Supply an immutable digest/tag built off-server. This file never builds source.
+# Build off-server; preflight requires content-addressed images. No public ports.
+x-runtime: &runtime
+  restart: unless-stopped
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
 services:
-  app:
-    image: ${DOAIDE_IMAGE:?Set the immutable app image digest}
-    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8012"]
-    restart: unless-stopped
-    env_file: .env.production
-    ports: ["127.0.0.1:8012:8012"]
-    volumes: ["suite-data:/data"]
-    read_only: true
+  scanner-init:
+    <<: *runtime
+    image: ${DOAIDE_SCANNER_IMAGE:?Set the immutable scanner image digest}
+    restart: "no"
+    command: ["freshclam", "--config-file=/etc/clamav/freshclam.conf"]
+    volumes: ["scanner-definitions:/var/lib/clamav"]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    mem_limit: 2g
+    cpus: 0.5
+    healthcheck: {disable: true}
+  scanner:
+    <<: *runtime
+    image: ${DOAIDE_SCANNER_IMAGE:?Set the immutable scanner image digest}
+    network_mode: none
+    volumes: ["scanner-definitions:/var/lib/clamav:ro", "scanner-socket:/run/clamav"]
     tmpfs: ["/tmp:size=128m,mode=1777"]
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
+    mem_limit: 2g
+    cpus: 1.0
+    depends_on:
+      scanner-init: {condition: service_completed_successfully}
+  scanner-updater:
+    <<: *runtime
+    image: ${DOAIDE_SCANNER_IMAGE:?Set the immutable scanner image digest}
+    command: ["freshclam", "--config-file=/etc/clamav/freshclam.conf", "--daemon", "--foreground=true", "--checks=12"]
+    volumes: ["scanner-definitions:/var/lib/clamav", "scanner-socket:/run/clamav"]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    mem_limit: 2g
+    cpus: 0.5
+    healthcheck: {disable: true}
+    depends_on:
+      scanner: {condition: service_healthy}
+  app:
+    <<: *runtime
+    image: ${DOAIDE_IMAGE:?Set the immutable app image digest}
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8012", "--proxy-headers"]
+    env_file:
+      - path: ${DOAIDE_ENV_FILE:-.env.production}
+        format: raw
+    ports: ["127.0.0.1:${DOAIDE_PORT:-8012}:8012"]
+    volumes: ["suite-data:/data", "scanner-socket:/run/clamav:ro"]
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8012/api/ready', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    depends_on:
+      scanner: {condition: service_healthy}
   worker:
+    <<: *runtime
     image: ${DOAIDE_WORKER_IMAGE:?Set the immutable worker image digest}
     command: ["python", "-m", "backend.worker"]
-    restart: unless-stopped
-    env_file: .env.production
-    volumes: ["suite-data:/data"]
-    read_only: true
+    env_file:
+      - path: ${DOAIDE_ENV_FILE:-.env.production}
+        format: raw
+    volumes: ["suite-data:/data", "scanner-socket:/run/clamav:ro"]
     tmpfs: ["/tmp:size=512m,mode=1777"]
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
+    mem_limit: 1g
+    cpus: 1.0
+    stop_grace_period: 120s
+    healthcheck:
+      test: ["CMD", "python", "-m", "backend.diagnostics"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
     depends_on:
-      app:
-        condition: service_healthy
+      # API readiness requires this worker; waiting for service_healthy deadlocks.
+      app: {condition: service_started}
+
 volumes:
   suite-data:
+  scanner-definitions:
+  scanner-socket:

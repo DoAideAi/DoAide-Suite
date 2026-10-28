@@ -5,6 +5,7 @@ from fastapi import Depends
 from fastapi.responses import JSONResponse
 from .db import database
 from .migrations import permit
+from .malware import scanner_ready
 
 
 def health(db):
@@ -20,6 +21,7 @@ def install_diagnostics(app,path,current_user):
         try:
             with database(path) as db:state=health(db)
             ready=state['schema_version']==5 and (os.environ.get('DOAIDE_REQUIRE_WORKER','false')!='true' or state['worker_healthy'])
+            if os.environ.get('DOAIDE_REQUIRE_MALWARE_SCAN')=='true':ready=ready and scanner_ready()
         except Exception:ready=False
         return JSONResponse({'ready':ready},status_code=200 if ready else 503)
 
@@ -31,4 +33,16 @@ def install_diagnostics(app,path,current_user):
             state['jobs']=[dict(r) for r in db.execute('SELECT kind,state,count(*) AS count,min(due_at) AS oldest_due FROM jobs WHERE workspace_id=? GROUP BY kind,state',(user['workspace_id'],))]
             state['database_bytes']=db.execute('PRAGMA page_count').fetchone()[0]*db.execute('PRAGMA page_size').fetchone()[0]
             state['delivery_mode']=os.environ.get('DOAIDE_DELIVERY_MODE','disabled')
+            state['malware_screening_required']=os.environ.get('DOAIDE_REQUIRE_MALWARE_SCAN')=='true'
+            if state['malware_screening_required']:state['scanner_healthy']=scanner_ready()
             return state
+
+
+if __name__ == '__main__':
+    # Container worker health is independent of the HTTP server and its port.
+    import sys
+    try:
+        with database() as db:state=health(db)
+        healthy=state['schema_version']==5 and state['worker_healthy']
+    except Exception:healthy=False
+    sys.exit(0 if healthy else 1)

@@ -1,18 +1,20 @@
 {
-  "version": "0.6.0",
-  "schema": 5,
-  "readiness": {
-    "ready": true
+  "checked_at": "2026-10-28T20:02:34.297633+00:00",
+  "version": "0.6.1",
+  "readiness": true,
+  "runtime": {
+    "schema_version": 5,
+    "worker_age_seconds": 1,
+    "worker_has_active_lease": false,
+    "worker_healthy": true
   },
-  "integrity": "ok",
-  "foreign_keys": "ok",
-  "counts": {
+  "counts_preserved": {
     "users": 2,
     "records": 16,
     "audit_events": 18,
     "files": 0,
     "portfolio_authorities": 0
   },
-  "backup": "var/backups/doaide-v06-cutover-20261028.db",
-  "external_connections_activated": false
+  "backup": "var/backups/doaide-v061-cutover-20261029.db",
+  "production_deployed": false
 }

@@ -1,6 +1,6 @@
 # Remaining integration and release acceptance
 
-29 October 2026 · v0.6
+29 October 2026 · v0.6.1
 
 The v0.3 product-feature checklist has been implemented in the shared application. This does **not** establish that the twelve original scopes are production-complete. Original requirements remain in [SCOPE_OF_WORK.md](SCOPE_OF_WORK.md) and the individual scopes.
 
@@ -34,7 +34,7 @@ The v0.3 product-feature checklist has been implemented in the shared applicatio
 
 1. **Current browser/mobile/accessibility acceptance:** the browser tool rejected the local URL. API/build/PDF checks pass, but historical screenshots do not certify v0.6 interaction or accessibility.
 2. **Pilot/domain review:** representative inputs and approved tax/invoice documents, service plans, tender interpretation, provider packet/redaction rules, concessions/late fees, disposal, training and cancellation policies. The app records human decisions; it does not establish legal or third-party acceptance.
-3. **Production environment:** validate deployment/database capacity, trusted proxy configuration, malware scanning, external monitoring/alerts, private off-site encrypted backups, key custody and target-host restore/rollback. The local container check is not production load acceptance.
+3. **Production environment:** v0.6.1 implements resource-limited containers, strict proxy/origin configuration, private ClamAV scanning, capacity preflight, monitoring probes and off-site encrypted backup/restore tooling. The existing host fails the capacity gate (about 81% disk, 1.39 GiB available RAM and 98.9% swap). Select an adequately sized target, configure the approved domain/proxy and independent backup/alert destinations, install schedules, and rehearse target-host restore/rollback. See [RELEASE.md](RELEASE.md). Local container checks do not establish production capacity or active monitoring.
 4. **Retention/erasure policy:** encryption and workspace-data erasure tooling are implemented and tested. Approve actual retention periods, backup expiry and account closure before executing erasure. Account identities/memberships and provider-event deduplication identifiers remain outside the workspace-data eraser.
 5. **Provider acceptance:** configured test credentials, prices and callback URLs are required. Enqueue/SMTP acceptance does not prove customer delivery; an exported packet is not a submission; a draft is not a finalized tax invoice.
 
