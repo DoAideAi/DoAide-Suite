@@ -185,5 +185,6 @@ def test_offsite_backup_restores_and_monitor_rejects_stale_receipts(tmp_path, mo
     assert not result['healthy']
     metrics = tmp_path / 'suite.prom'; write_metrics(metrics, result)
     assert 'doaide_suite_healthy 0\n' in metrics.read_text()
+    assert metrics.stat().st_mode & 0o777 == 0o644
     destination.unlink()
     assert not inspect('https://suite.example.test', destination.parent)['healthy']

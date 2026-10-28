@@ -77,6 +77,9 @@ def write_metrics(path, result):
         output.write(f'doaide_suite_probe_timestamp_seconds {int(datetime.now(timezone.utc).timestamp())}\n')
         output.flush()
         os.fsync(output.fileno())
+    # These coarse public readiness gauges contain no business data or secrets;
+    # the independent node-exporter account must be able to read them.
+    os.chmod(output.name, 0o644)
     os.replace(output.name, destination)
 
 
