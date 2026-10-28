@@ -1,0 +1,27 @@
+{
+  "checked_at": "2026-10-28T14:12:16.729795+00:00",
+  "checkout": "/Users/dev/projects/doaide/DoAide-Suite",
+  "compatibility_link": "/Users/dev/Documents/doaide/products/doaide-suite",
+  "database_integrity": "ok",
+  "preserved_counts": {
+    "users": 1,
+    "records": 13,
+    "audit_events": 15
+  },
+  "api": {
+    "status": "ok",
+    "stage": "local-development",
+    "products": 12
+  },
+  "readiness": {
+    "ready": true
+  },
+  "worker": {
+    "schema_version": 3,
+    "worker_age_seconds": 1,
+    "worker_has_active_lease": false,
+    "worker_healthy": true
+  },
+  "backup_restore": "passed before relocation",
+  "browser_validation": "not performed; existing URL-policy restriction remains"
+}

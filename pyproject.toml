@@ -1,0 +1,22 @@
+[project]
+name = "doaide-suite"
+version = "0.3.0"
+description = "Operational workspaces for twelve DoAide products"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "httpx>=0.28.1",
+    "pillow>=13.0.0",
+    "pypdf>=6.21.3",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.32",
+    "reportlab>=5.1.0",
+    "uvicorn>=0.34,<1",
+]
+
+[dependency-groups]
+dev = ["httpx>=0.28,<1", "pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

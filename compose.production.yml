@@ -1,0 +1,28 @@
+# Supply an immutable digest/tag built off-server. This file never builds source.
+services:
+  app:
+    image: ${DOAIDE_IMAGE:?Set the immutable app image digest}
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8012"]
+    restart: unless-stopped
+    env_file: .env.production
+    ports: ["127.0.0.1:8012:8012"]
+    volumes: ["suite-data:/data"]
+    read_only: true
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+  worker:
+    image: ${DOAIDE_WORKER_IMAGE:?Set the immutable worker image digest}
+    command: ["python", "-m", "backend.worker"]
+    restart: unless-stopped
+    env_file: .env.production
+    volumes: ["suite-data:/data"]
+    read_only: true
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  suite-data:

@@ -1,0 +1,8 @@
+import React,{useState} from 'react';
+import {post} from './client';
+
+export function AccountLink({purpose,token}) {
+  const [password,setPassword]=useState(''),[confirm,setConfirm]=useState(''),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  async function submit(e){e.preventDefault();setError('');if(purpose==='reset'&&password!==confirm){setError('Passwords do not match.');return;}setBusy(true);try{const r=await post('/auth/'+(purpose==='reset'?'reset':'verify'),purpose==='reset'?{token,password}:{token});setMessage(r.message);}catch(e){setError(e.message);}finally{setBusy(false);}}
+  return <main className="portal"><a className="brand" href="/">doaide.</a><section className="portal-document"><h1>{purpose==='reset'?'Choose a new password':'Verify your email'}</h1>{error&&<div className="error" role="alert">{error}</div>}{message?<><p className="notice success" role="status">{message}</p><a className="button primary" href="/">Return to sign in</a></>:<form className="acceptance-form" onSubmit={submit}>{purpose==='reset'?<><label>New password<input type="password" autoComplete="new-password" minLength="12" maxLength="256" required value={password} onChange={e=>setPassword(e.target.value)}/></label><label>Confirm new password<input type="password" autoComplete="new-password" minLength="12" maxLength="256" required value={confirm} onChange={e=>setConfirm(e.target.value)}/></label></>:<p>Confirm that you opened this link from your email account.</p>}<button className="button primary" disabled={busy}>{purpose==='reset'?'Update password':'Verify email'}</button></form>}</section></main>;
+}

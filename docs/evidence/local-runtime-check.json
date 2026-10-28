@@ -1,0 +1,13 @@
+{
+  "checked_at": "2026-10-28T12:03:18.276040+00:00",
+  "version": "0.3.0",
+  "api": "ready",
+  "worker": "healthy",
+  "existing_records": 13,
+  "report_records": 13,
+  "products": 12,
+  "billing_mode": "local",
+  "schema_version": 3,
+  "accounting_csv": "passed",
+  "browser_qa": "still blocked by browser URL policy; API checks only"
+}

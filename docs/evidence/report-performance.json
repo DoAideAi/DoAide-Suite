@@ -1,0 +1,15 @@
+{
+  "fixture_records": 1200,
+  "products": 12,
+  "requests": 3,
+  "seconds": [
+    0.0309,
+    0.0306,
+    0.0302
+  ],
+  "median_seconds": 0.0306,
+  "csv_rows": 1200,
+  "report_reads_created_no_workflows": true,
+  "integrity": "ok",
+  "scope": "Local isolated single-process benchmark, not production load acceptance"
+}

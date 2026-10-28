@@ -1,0 +1,15 @@
+{
+  "version": "0.3.0",
+  "image_id": "sha256:bbcfa25a942b338ad4a0d2321b600dd788110b9462deb13558c6945881f6988b",
+  "user_id": "10001",
+  "read_only_root": true,
+  "ephemeral_database": true,
+  "registration": "passed",
+  "operational_approval": "passed",
+  "frozen_pdf_identity": "passed",
+  "portfolio_products": 12,
+  "billing_mode": "local",
+  "schema_version": 3,
+  "worker_readiness": "passed",
+  "external_provider_requests": 0
+}

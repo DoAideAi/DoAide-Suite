@@ -1,0 +1,132 @@
+{
+  "date": "2026-10-27",
+  "desktopWidth": 1440,
+  "desktop": [
+    {
+      "product": "Scope",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "Collect",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "AMC",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "RFQ",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "Tender",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "Handover",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "OrderDesk",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "Batch",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "Fees",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "Renew",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "SOP",
+      "resultVisible": true,
+      "exportVisible": true
+    },
+    {
+      "product": "ClaimPack",
+      "resultVisible": true,
+      "exportVisible": true
+    }
+  ],
+  "mobile": [
+    {
+      "product": "Scope",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "Collect",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "AMC",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "RFQ",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "Tender",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "Handover",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "OrderDesk",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "Batch",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "Fees",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "Renew",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "SOP",
+      "content": 390,
+      "viewport": 390
+    },
+    {
+      "product": "ClaimPack",
+      "content": 390,
+      "viewport": 390
+    }
+  ],
+  "scopeSaveReview": true,
+  "scopeInvalidInput": true,
+  "scopeDownload": true,
+  "consoleErrors": []
+}
